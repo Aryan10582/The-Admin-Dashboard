@@ -1,0 +1,20 @@
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+
+import { Providers } from "@/components/layout/Providers";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Admin Dashboard",
+  description: "Central SaaS operations platform foundation"
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}
