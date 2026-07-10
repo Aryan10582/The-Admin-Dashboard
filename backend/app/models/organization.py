@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Uuid
+from decimal import Decimal
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, String, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import (
@@ -37,6 +39,15 @@ class Organization(Base, TimestampMixin):
     )
     credit_status: Mapped[CreditStatus] = mapped_column(Enum(CreditStatus), default=CreditStatus.not_applicable, nullable=False)
     service_status: Mapped[ServiceStatus] = mapped_column(Enum(ServiceStatus), default=ServiceStatus.pending_sync, nullable=False)
+    service_enforcement_status: Mapped[ServiceStatus] = mapped_column(
+        Enum(ServiceStatus),
+        default=ServiceStatus.pending_sync,
+        nullable=False,
+    )
+    credit_balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    outstanding_dues: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, nullable=False)
+    selected_ai_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    selected_ai_model: Mapped[str | None] = mapped_column(String(150), nullable=True)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -46,6 +57,16 @@ class Organization(Base, TimestampMixin):
 
 class OrganizationMapping(Base, TimestampMixin):
     __tablename__ = "organization_mappings"
+    __table_args__ = (
+        Index(
+            "uq_active_product_org_mapping",
+            "product_deployment_id",
+            "product_organization_id",
+            unique=True,
+            sqlite_where=text("mapping_status = 'active'"),
+            postgresql_where=text("mapping_status = 'active'"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)

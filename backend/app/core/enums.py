@@ -96,3 +96,59 @@ class FailureStatus(StrEnum):
     retrying = "retrying"
     resolved = "resolved"
     ignored = "ignored"
+
+
+class CompatibilityStatus(StrEnum):
+    compatible = "compatible"
+    incompatible = "incompatible"
+    unknown = "unknown"
+    requires_upgrade = "requires_upgrade"
+
+
+class ProductConfirmationStatus(StrEnum):
+    pending = "pending"
+    confirmed = "confirmed"
+    failed = "failed"
+    not_required = "not_required"
+
+
+class BillingTransactionType(StrEnum):
+    credit_grant = "credit_grant"
+    credit_deduction = "credit_deduction"
+    manual_payment = "manual_payment"
+    usage_charge = "usage_charge"
+    adjustment = "adjustment"
+    correction = "correction"
+    reversal = "reversal"
+
+
+class RevenueType(StrEnum):
+    recognized = "recognized"
+    collected = "collected"
+    outstanding = "outstanding"
+    adjustment = "adjustment"
+
+
+class RevenueSource(StrEnum):
+    billing_ledger = "billing_ledger"
+    manual_payment = "manual_payment"
+    product_sync = "product_sync"
+    admin_adjustment = "admin_adjustment"
+
+
+class MismatchStatus(StrEnum):
+    matched = "matched"
+    mismatch = "mismatch"
+    pending_review = "pending_review"
+
+
+class IdempotencyRecordStatus(StrEnum):
+    started = "started"
+    completed = "completed"
+    failed = "failed"
+    expired = "expired"
+
+
+class PricingCreatedBy(StrEnum):
+    system = "system"
+    admin = "admin"

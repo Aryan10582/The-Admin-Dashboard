@@ -1,10 +1,10 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Enum, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.enums import Environment, ProductHealthStatus, SyncStatus
+from app.core.enums import CompatibilityStatus, Environment, ProductHealthStatus, SyncStatus
 from app.models.base import Base, TimestampMixin
 
 
@@ -19,6 +19,12 @@ class ProductDeployment(Base, TimestampMixin):
     api_base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     health_check_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     admin_api_version: Mapped[str] = mapped_column(String(50), default="v1", nullable=False)
+    supported_endpoints: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    compatibility_status: Mapped[CompatibilityStatus] = mapped_column(
+        Enum(CompatibilityStatus),
+        default=CompatibilityStatus.unknown,
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_under_maintenance: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     health_status: Mapped[ProductHealthStatus] = mapped_column(

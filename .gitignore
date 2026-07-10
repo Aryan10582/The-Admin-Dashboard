@@ -12,4 +12,5 @@ dist/
 .pnpm-store/
 
 .env
+.env.local
 .DS_Store
