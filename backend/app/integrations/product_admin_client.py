@@ -69,6 +69,8 @@ class ProductDeliveryResult:
     product_request_id: str | None = None
     idempotency_key: str | None = None
     http_status: int | None = None
+    plan_code: str | None = None
+    plan_version_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -364,6 +366,8 @@ class ProductAdminClient:
             product_request_id=str(data.get("product_request_id") or data.get("request_id") or "") or None,
             idempotency_key=str(data.get("idempotency_key") or "") or None,
             http_status=response.status_code,
+            plan_code=str(data.get("plan_code") or "") or None,
+            plan_version_number=int(data["plan_version"]) if str(data.get("plan_version") or "").isdigit() else None,
         )
 
     async def get_pending_change_status(self, idempotency_key: str) -> ProductPendingChangeStatusResult:
@@ -406,6 +410,8 @@ class ProductAdminClient:
             product_request_id=str(data.get("product_request_id") or data.get("request_id") or "") or None,
             idempotency_key=str(data.get("idempotency_key") or "") or None,
             http_status=response.status_code,
+            plan_code=str(data.get("plan_code") or "") or None,
+            plan_version_number=int(data["plan_version"]) if str(data.get("plan_version") or "").isdigit() else None,
         )
 
     async def get_token_usage(self, product_organization_id: str) -> dict:

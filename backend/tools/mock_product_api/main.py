@@ -29,6 +29,11 @@ SCENARIOS = {
     "accepted_unconfirmed",
     "ambiguous_2xx",
     "contradictory_value",
+    "unknown_plan_code",
+    "unsupported_plan_version",
+    "currency_mismatch",
+    "billing_mode_incompatibility",
+    "contradictory_plan",
     "status_lookup_confirms",
     "status_lookup_unknown",
     "empty_organizations",
@@ -114,6 +119,11 @@ def _delivery_response(body: dict, scenario: str, *, from_lookup: bool = False) 
         "mock": True,
         "from_status_lookup": from_lookup,
     }
+    payload = body.get("payload") or {}
+    if action in {"assign_plan_version", "change_plan_version"}:
+        response["plan_code"] = payload.get("plan_code")
+        response["plan_version"] = payload.get("plan_version_number")
+        response["current_product_value"] = f"{payload.get('plan_code')}@v{payload.get('plan_version_number')}"
     if scenario == "organization_mismatch":
         response["product_organization_id"] = "mock-wrong-org"
     elif scenario == "deployment_mismatch":
@@ -127,12 +137,17 @@ def _delivery_response(body: dict, scenario: str, *, from_lookup: bool = False) 
         response["idempotency_key"] = f"wrong-{idempotency_key}"
     elif scenario == "product_rejection":
         response.update(success=False, error_code="product_rejection", safe_error_message="Mock product rejection")
+    elif scenario in {"unknown_plan_code", "unsupported_plan_version", "currency_mismatch", "billing_mode_incompatibility"}:
+        response.update(success=False, error_code=scenario, safe_error_message=f"Mock {scenario.replace('_', ' ')}")
     elif scenario == "accepted_unconfirmed":
         response["sync_confirmed"] = False
     elif scenario == "ambiguous_2xx":
         return {"product_request_id": _request_id(), "message": "Mock ambiguous response"}
     elif scenario == "contradictory_value":
         response["current_product_value"] = "mock-contradictory-value"
+    elif scenario == "contradictory_plan":
+        response["plan_code"] = "mock_wrong_plan"
+        response["plan_version"] = 999
     elif scenario == "status_lookup_unknown":
         response.update(success=False, sync_confirmed=False, error_code="unclear_confirmation", safe_error_message="Mock status lookup could not confirm application")
     return response

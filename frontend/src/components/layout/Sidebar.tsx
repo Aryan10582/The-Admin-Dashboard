@@ -25,6 +25,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
   { href: "/products", label: "Products", icon: Package },
   { href: "/organizations", label: "Organizations", icon: Building2 },
+  { href: "/plans", label: "Plans", icon: Receipt },
   { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/revenue", label: "Revenue", icon: BarChart3 },
   { href: "/ai-usage", label: "AI Usage", icon: Bot },

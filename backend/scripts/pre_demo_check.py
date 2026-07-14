@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 from uuid import UUID
@@ -193,6 +194,78 @@ def run() -> int:
             reporter.pass_("organization and mapping")
         except Exception as exc:
             reporter.fail("organization and mapping", exc)
+            return 1
+
+        try:
+            plan = _api(
+                client,
+                "POST",
+                "/api/v1/plans",
+                json={
+                    "plan_code": f"{unique}_starter",
+                    "name": f"{unique} Starter",
+                    "description": "Pre-demo plan",
+                    "product_deployment_id": product_id,
+                    "currency": "USD",
+                },
+            )
+            version_one = _api(
+                client,
+                "POST",
+                f"/api/v1/plans/{plan['id']}/versions",
+                json={
+                    "currency": "USD",
+                    "billing_mode_compatibility": "prepaid_credits",
+                    "base_price": "49.00",
+                    "pricing_structure": {"type": "flat_monthly"},
+                    "limits": {"users": 3},
+                    "included_tokens": 1000,
+                    "included_leads": 25,
+                    "overage_pricing": {"lead": "2.00"},
+                    "effective_from": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                    "effective_to": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+                    "reason": "pre-demo v1",
+                },
+            )
+            version_two = _api(
+                client,
+                "POST",
+                f"/api/v1/plans/{plan['id']}/versions",
+                json={
+                    "currency": "USD",
+                    "billing_mode_compatibility": "prepaid_credits",
+                    "base_price": "79.00",
+                    "pricing_structure": {"type": "flat_monthly"},
+                    "limits": {"users": 8},
+                    "included_tokens": 2500,
+                    "included_leads": 50,
+                    "overage_pricing": {"lead": "1.50"},
+                    "effective_from": (datetime.now(timezone.utc) + timedelta(days=40)).isoformat(),
+                    "reason": "pre-demo v2",
+                },
+            )
+            if version_one["price"] != "49.00" or version_two["version_number"] != 2:
+                raise RuntimeError("Plan versions did not preserve immutable v1 and generated v2")
+            assignment = _api(
+                client,
+                "POST",
+                f"/api/v1/organizations/{org_id}/plan-assignment",
+                json={"billing_plan_version_id": version_one["id"], "reason": "pre-demo assign plan"},
+                headers=_idem("plan"),
+            )
+            before_confirm = _api(client, "GET", f"/api/v1/organizations/{org_id}/plan-assignment")
+            if before_confirm["current_intended"]["product_confirmation_status"] != "pending":
+                raise RuntimeError("Plan assignment was incorrectly product-confirmed before delivery")
+            sync_result = _api(client, "POST", f"/api/v1/organizations/{org_id}/sync")
+            after_confirm = _api(client, "GET", f"/api/v1/organizations/{org_id}/plan-assignment")
+            history = _api(client, "GET", f"/api/v1/organizations/{org_id}/plan-assignment-history")
+            if after_confirm["current_intended"]["product_confirmation_status"] != "confirmed" or not history:
+                raise RuntimeError(f"Plan assignment did not confirm through pending-change delivery: {sync_result}")
+            if assignment["assignment"]["billing_plan_version_id"] != version_one["id"]:
+                raise RuntimeError("Assignment did not store the exact version")
+            reporter.pass_("billing plans versions assignment and delivery")
+        except Exception as exc:
+            reporter.fail("billing plans versions assignment and delivery", exc)
             return 1
 
         try:

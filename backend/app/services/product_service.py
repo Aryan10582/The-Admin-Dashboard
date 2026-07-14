@@ -11,7 +11,7 @@ from app.core.product_secrets import decrypt_product_secret, encrypt_product_sec
 from app.integrations.product_admin_client import ProductHealthResult
 from app.models.admin import Admin
 from app.models.audit import AuditLog
-from app.models.billing import BillingLedgerEntry, ManualPayment
+from app.models.billing import BillingLedgerEntry, BillingPlan, BillingPlanVersion, ManualPayment, OrganizationPlanAssignment
 from app.models.discovery import ProductOrganizationDiscovery
 from app.models.failure_log import FailureLog
 from app.models.idempotency import IdempotencyRecord
@@ -113,6 +113,15 @@ def product_dependency_summary(db: Session, product_id: UUID) -> dict:
         "discovered_organizations": db.scalar(select(func.count()).select_from(ProductOrganizationDiscovery).where(ProductOrganizationDiscovery.product_deployment_id == product_id)) or 0,
         "ledger_entries": db.scalar(select(func.count()).select_from(BillingLedgerEntry).where(BillingLedgerEntry.product_deployment_id == product_id)) or 0,
         "manual_payments": db.scalar(select(func.count()).select_from(ManualPayment).where(ManualPayment.product_deployment_id == product_id)) or 0,
+        "billing_plans": db.scalar(select(func.count()).select_from(BillingPlan).where(BillingPlan.product_deployment_id == product_id)) or 0,
+        "billing_plan_versions": db.scalar(
+            select(func.count())
+            .select_from(BillingPlanVersion)
+            .join(BillingPlan, BillingPlan.id == BillingPlanVersion.billing_plan_id)
+            .where(BillingPlan.product_deployment_id == product_id)
+        )
+        or 0,
+        "plan_assignments": db.scalar(select(func.count()).select_from(OrganizationPlanAssignment).where(OrganizationPlanAssignment.organization_id.in_(org_ids))) if org_ids else 0,
         "pending_changes": db.scalar(select(func.count()).select_from(PendingProductChange).where(PendingProductChange.product_deployment_id == product_id)) or 0,
         "failure_logs": db.scalar(select(func.count()).select_from(FailureLog).where(FailureLog.product_deployment_id == product_id)) or 0,
         "audit_logs": db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.product_deployment_id == product_id)) or 0,
@@ -245,11 +254,14 @@ def purge_test_product_data(db: Session, product: ProductDeployment, *, reason: 
         (ManualPayment, ManualPayment.product_deployment_id == product.id),
         (PendingProductChange, PendingProductChange.product_deployment_id == product.id),
         (ProductOrganizationDiscovery, ProductOrganizationDiscovery.product_deployment_id == product.id),
+        (OrganizationPlanAssignment, OrganizationPlanAssignment.organization_id.in_(org_ids) if org_ids else None),
         (OrganizationMapping, OrganizationMapping.product_deployment_id == product.id),
         (FailureLog, FailureLog.product_deployment_id == product.id),
         (AuditLog, AuditLog.product_deployment_id == product.id),
         (IdempotencyRecord, IdempotencyRecord.organization_id.in_(org_ids) if org_ids else None),
         (Organization, Organization.product_deployment_id == product.id),
+        (BillingPlanVersion, BillingPlanVersion.billing_plan_id.in_(select(BillingPlan.id).where(BillingPlan.product_deployment_id == product.id))),
+        (BillingPlan, BillingPlan.product_deployment_id == product.id),
     ):
         if condition is not None:
             for row in list(db.scalars(select(model).where(condition))):

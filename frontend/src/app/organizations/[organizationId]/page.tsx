@@ -26,12 +26,14 @@ import {
   resumeService,
   type ServiceActionPayload
 } from "@/lib/serviceEnforcement";
+import { assignOrganizationPlan, getOrganizationPlanAssignment, listOrganizationPlanHistory, listPlans } from "@/lib/plans";
 import { syncOrganization } from "@/lib/sync";
 import type { OrganizationMappingPayload, OrganizationPayload } from "@/lib/types";
 
 const placeholders = ["AI Usage", "Revenue", "Audit History", "Impersonation"];
 type FinancialFormValues = FinancialActionPayload & { idempotency_key: string };
 type ServiceFormValues = ServiceActionPayload & { idempotency_key: string };
+type PlanFormValues = { billing_plan_version_id: string; reason: string; idempotency_key: string };
 
 function statusTone(status: string) {
   if (["active", "healthy_balance", "running", "synced"].includes(status)) return "success";
@@ -59,15 +61,27 @@ export default function OrganizationDetailPage() {
   const billingQuery = useQuery({ queryKey: ["organizations", organizationId, "billing"], queryFn: () => getOrganizationBilling(organizationId) });
   const ledgerQuery = useQuery({ queryKey: ["organizations", organizationId, "ledger"], queryFn: () => getOrganizationLedger(organizationId, { limit: 10 }) });
   const serviceQuery = useQuery({ queryKey: ["organizations", organizationId, "service-enforcement"], queryFn: () => getServiceEnforcement(organizationId) });
+  const planAssignmentQuery = useQuery({ queryKey: ["organizations", organizationId, "plan-assignment"], queryFn: () => getOrganizationPlanAssignment(organizationId) });
+  const planHistoryQuery = useQuery({ queryKey: ["organizations", organizationId, "plan-assignment-history"], queryFn: () => listOrganizationPlanHistory(organizationId) });
   const organizationForm = useForm<OrganizationPayload>();
   const mappingForm = useForm<OrganizationMappingPayload>();
   const addCreditsForm = useForm<FinancialFormValues>({ defaultValues: { amount: "", reason: "", idempotency_key: "" } });
   const deductCreditsForm = useForm<FinancialFormValues>({ defaultValues: { amount: "", reason: "", idempotency_key: "" } });
   const manualPaymentForm = useForm<FinancialFormValues>({ defaultValues: { amount: "", reason: "", idempotency_key: "", payment_method: "", payment_reference: "" } });
   const serviceForm = useForm<ServiceFormValues>({ defaultValues: { reason: "", idempotency_key: "" } });
+  const planForm = useForm<PlanFormValues>({ defaultValues: { billing_plan_version_id: "", reason: "", idempotency_key: "" } });
 
   const organization = organizationQuery.data?.data;
   const billingCurrency = billingQuery.data?.data.currency ?? organization?.currency ?? "";
+  const eligiblePlansQuery = useQuery({
+    queryKey: ["plans", "eligible", organization?.product_deployment_id, organization?.currency],
+    queryFn: () => listPlans({ product_deployment_id: organization?.product_deployment_id, currency: organization?.currency, is_active: "true", limit: 100 }),
+    enabled: Boolean(organization)
+  });
+  const eligibleVersions =
+    eligiblePlansQuery.data?.data.items
+      .map((plan) => ({ plan, version: plan.current_effective_version }))
+      .filter((item) => item.version && item.version.billing_mode_compatibility === organization?.billing_mode) ?? [];
 
   useEffect(() => {
     if (!organization) return;
@@ -96,6 +110,9 @@ export default function OrganizationDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "billing"] });
     await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "ledger"] });
     await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "service-enforcement"] });
+    await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "plan-assignment"] });
+    await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "plan-assignment-history"] });
+    await queryClient.invalidateQueries({ queryKey: ["plans"] });
   };
 
   const updateMutation = useMutation({ mutationFn: (values: OrganizationPayload) => updateOrganization(organizationId, values), onSuccess: refresh });
@@ -151,6 +168,18 @@ export default function OrganizationDetailPage() {
     },
     onSuccess: async () => {
       serviceForm.reset({ reason: "", idempotency_key: "" });
+      await refresh();
+    }
+  });
+  const planMutation = useMutation({
+    mutationFn: (values: PlanFormValues) =>
+      assignOrganizationPlan(
+        organizationId,
+        { billing_plan_version_id: values.billing_plan_version_id, reason: values.reason },
+        values.idempotency_key
+      ),
+    onSuccess: async () => {
+      planForm.reset({ billing_plan_version_id: "", reason: "", idempotency_key: "" });
       await refresh();
     }
   });
@@ -308,6 +337,97 @@ export default function OrganizationDetailPage() {
               </div>
               {serviceMutation.data ? <p className="mt-3 text-sm text-muted-foreground">Saved as pending product change {serviceMutation.data.data.pending_product_change_id}. Product confirmation is still pending.</p> : null}
               {serviceMutation.isError ? <p className="mt-3 text-sm text-red-700">{serviceMutation.error.message}</p> : null}
+            </section>
+
+            <section className="rounded-md border border-border bg-white p-5">
+              <h2 className="text-base font-semibold">Plan Assignment</h2>
+              {planAssignmentQuery.isLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading plan assignment...</p> : null}
+              {planAssignmentQuery.isError ? <p className="mt-3 text-sm text-red-700">{planAssignmentQuery.error.message}</p> : null}
+              {planAssignmentQuery.data ? (
+                <div className="mt-4 grid gap-4 md:grid-cols-4">
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">Intended Plan</p>
+                    <p className="mt-1 text-sm">
+                      {planAssignmentQuery.data.data.current_intended
+                        ? `${planAssignmentQuery.data.data.current_intended.plan_name} v${planAssignmentQuery.data.data.current_intended.version_number}`
+                        : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">Product Confirmation</p>
+                    <div className="mt-1">
+                      <StatusBadge tone={statusTone(planAssignmentQuery.data.data.current_intended?.product_confirmation_status ?? "pending")}>
+                        {planAssignmentQuery.data.data.current_intended?.product_confirmation_status ?? "pending"}
+                      </StatusBadge>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">Pending Change</p>
+                    <p className="mt-1 text-sm">{planAssignmentQuery.data.data.pending_change_status ?? "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">Last Confirmed</p>
+                    <p className="mt-1 text-sm">
+                      {planAssignmentQuery.data.data.last_product_confirmed
+                        ? `${planAssignmentQuery.data.data.last_product_confirmed.plan_name} v${planAssignmentQuery.data.data.last_product_confirmed.version_number}`
+                        : "-"}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              <form className="mt-5 grid gap-3 md:grid-cols-4" onSubmit={planForm.handleSubmit((values) => planMutation.mutate(values))}>
+                <select className="h-10 rounded-md border border-border bg-white px-3 text-sm md:col-span-2" {...planForm.register("billing_plan_version_id", { required: true })}>
+                  <option value="">Select eligible plan version</option>
+                  {eligibleVersions.map(({ plan, version }) =>
+                    version ? (
+                      <option key={version.id} value={version.id}>
+                        {plan.name} v{version.version_number} / {version.price} {version.currency} / {version.billing_mode_compatibility}
+                      </option>
+                    ) : null
+                  )}
+                </select>
+                <Input placeholder="Reason / note" {...planForm.register("reason", { required: true })} />
+                <Input placeholder="Idempotency key" {...planForm.register("idempotency_key", { required: true })} />
+                <div className="md:col-span-4">
+                  <Button type="submit" disabled={planMutation.isPending || eligiblePlansQuery.isLoading}>
+                    {planMutation.isPending ? "Assigning..." : "Change Intended Plan"}
+                  </Button>
+                  {organization.product_deployment.environment === "production" ? (
+                    <p className="mt-2 text-sm text-amber-700">Production change: product confirmation remains pending until delivered and explicitly confirmed.</p>
+                  ) : null}
+                  {planMutation.data && planAssignmentQuery.data?.data.pending_change_status !== "confirmed_and_synced" ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Saved as pending product change {planMutation.data.data.pending_product_change_id}. Product confirmation is pending.
+                    </p>
+                  ) : null}
+                  {planMutation.isError ? <p className="mt-2 text-sm text-red-700">{planMutation.error.message}</p> : null}
+                </div>
+              </form>
+
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold">Recent Assignment History</h3>
+                {planHistoryQuery.data?.data.length ? (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-muted text-xs uppercase text-muted-foreground">
+                        <tr><th className="px-3 py-2">Assigned</th><th className="px-3 py-2">Plan</th><th className="px-3 py-2">Price</th><th className="px-3 py-2">Confirmation</th><th className="px-3 py-2">Reason</th></tr>
+                      </thead>
+                      <tbody>
+                        {planHistoryQuery.data.data.slice(0, 5).map((assignment) => (
+                          <tr key={assignment.id} className="border-t border-border">
+                            <td className="px-3 py-2">{new Date(assignment.assigned_at).toLocaleString()}</td>
+                            <td className="px-3 py-2">{assignment.plan_name} v{assignment.version_number}</td>
+                            <td className="px-3 py-2">{assignment.base_price} {assignment.currency}</td>
+                            <td className="px-3 py-2">{assignment.product_confirmation_status}</td>
+                            <td className="px-3 py-2">{assignment.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p className="mt-3 text-sm text-muted-foreground">No plan assignment history yet.</p>}
+              </div>
             </section>
 
             <section className="rounded-md border border-border bg-white p-5">

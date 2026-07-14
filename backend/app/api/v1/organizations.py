@@ -31,6 +31,7 @@ from app.schemas.organization import (
     OrganizationUpdate,
 )
 from app.schemas.billing import AddCreditsRequest, DeductCreditsRequest, LedgerListResponse, ManualPaymentRequest, BillingLedgerEntryRead
+from app.schemas.billing import PlanAssignmentRequest
 from app.schemas.service_enforcement import ReasonRequest, ServiceEnforcementUpdate
 from app.services.billing_service import (
     LedgerFilters,
@@ -52,6 +53,7 @@ from app.services.organization_service import (
     upsert_mapping,
     verify_mapping,
 )
+from app.services.plan_service import assign_plan_version, get_organization_plan_assignment, list_organization_plan_history
 from app.services.service_enforcement import apply_service_action, get_service_enforcement, update_service_enforcement_config
 from app.services.sync_service import sync_organization
 
@@ -168,6 +170,35 @@ async def organizations_billing(
     current_admin: Admin = Depends(get_current_admin),
 ) -> dict:
     return {"success": True, "data": get_billing_summary(db, organization_id)}
+
+
+@router.get("/{organization_id}/plan-assignment")
+async def organizations_plan_assignment(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": get_organization_plan_assignment(db, organization_id).model_dump(mode="json")}
+
+
+@router.post("/{organization_id}/plan-assignment")
+async def organizations_plan_assignment_create(
+    organization_id: UUID,
+    payload: PlanAssignmentRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": assign_plan_version(db, organization_id, payload, idempotency_key, current_admin)}
+
+
+@router.get("/{organization_id}/plan-assignment-history")
+async def organizations_plan_assignment_history(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": [item.model_dump(mode="json") for item in list_organization_plan_history(db, organization_id)]}
 
 
 @router.post("/{organization_id}/sync")

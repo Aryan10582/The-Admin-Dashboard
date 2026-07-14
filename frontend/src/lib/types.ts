@@ -225,6 +225,120 @@ export type BillingSummary = {
   outstanding_dues: string;
 };
 
+export type BillingPlanVersion = {
+  id: string;
+  billing_plan_id: string;
+  version_number: number;
+  currency: string;
+  billing_mode_compatibility: BillingMode;
+  pricing_structure: Record<string, unknown>;
+  price: string;
+  limits: Record<string, unknown> | null;
+  included_tokens: number;
+  included_leads: number;
+  overage_pricing: Record<string, unknown> | null;
+  effective_from: string;
+  effective_to: string | null;
+  is_active: boolean;
+  external_product_plan_id: string | null;
+  created_by_admin_id: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+  immutable_terms: boolean;
+};
+
+export type BillingPlan = {
+  id: string;
+  plan_code: string;
+  name: string;
+  description: string | null;
+  product_deployment_id: string;
+  product_name: string | null;
+  region: string | null;
+  environment: string | null;
+  currency: string;
+  is_active: boolean;
+  latest_version: BillingPlanVersion | null;
+  current_effective_version: BillingPlanVersion | null;
+  version_count: number;
+  assignment_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingPlanListPayload = {
+  items: BillingPlan[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type BillingPlanPayload = {
+  plan_code: string;
+  name: string;
+  description?: string | null;
+  product_deployment_id: string;
+  currency: string;
+  is_active?: boolean;
+};
+
+export type BillingPlanVersionPayload = {
+  currency: string;
+  billing_mode_compatibility: BillingMode;
+  base_price: string;
+  pricing_structure: Record<string, unknown>;
+  limits?: Record<string, unknown> | null;
+  included_tokens: number;
+  included_leads: number;
+  overage_pricing?: Record<string, unknown> | null;
+  effective_from: string;
+  effective_to?: string | null;
+  is_active?: boolean;
+  external_product_plan_id?: string | null;
+  reason: string;
+};
+
+export type PlanAssignment = {
+  id: string;
+  organization_id: string;
+  billing_plan_id: string;
+  billing_plan_version_id: string;
+  plan_name: string;
+  plan_code: string;
+  version_number: number;
+  currency: string;
+  base_price: string;
+  billing_mode_compatibility: BillingMode;
+  effective_from: string;
+  effective_to: string | null;
+  assigned_at: string;
+  replaced_at: string | null;
+  assigned_by_admin_id: string | null;
+  reason: string | null;
+  previous_assignment_id: string | null;
+  pending_product_change_id: string | null;
+  pending_product_change_status: string | null;
+  product_confirmation_status: "pending" | "confirmed" | "failed" | "not_required";
+  product_confirmed_at: string | null;
+  product_confirmed_plan_code: string | null;
+  product_confirmed_version_number: number | null;
+};
+
+export type OrganizationPlanAssignmentState = {
+  organization_id: string;
+  current_intended: PlanAssignment | null;
+  last_product_confirmed: PlanAssignment | null;
+  pending_change_id: string | null;
+  pending_change_status: string | null;
+};
+
+export type PlanAssignmentResult = {
+  assignment: PlanAssignment;
+  pending_product_change_id: string;
+  idempotency_key: string;
+};
+
 export type BillingLedgerEntry = {
   id: string;
   organization_id: string;

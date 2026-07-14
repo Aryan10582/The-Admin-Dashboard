@@ -19,6 +19,7 @@ from app.models.pending_change import PendingProductChange
 from app.models.product import ProductDeployment
 from app.services.product_client import build_product_client
 from app.services.product_service import run_product_health_check
+from app.services.plan_service import confirm_assignment_from_product
 
 ELIGIBLE_STATUSES = {PendingChangeStatus.saved, PendingChangeStatus.failed, PendingChangeStatus.pending_retry}
 BLOCKING_STATUSES = {
@@ -76,6 +77,8 @@ def _safe_summary(result: ProductDeliveryResult) -> dict:
         "product_request_id": result.product_request_id,
         "idempotency_key": result.idempotency_key,
         "http_status": result.http_status,
+        "plan_code": result.plan_code,
+        "plan_version_number": result.plan_version_number,
     }
 
 
@@ -263,6 +266,12 @@ def _is_confirmed(change: PendingProductChange, mapping: OrganizationMapping, pr
     requested = (change.payload or {}).get("requested_intended_service_status")
     if requested and result.current_product_value and result.current_product_value != requested:
         return False
+    requested_plan_code = (change.payload or {}).get("plan_code")
+    requested_plan_version = (change.payload or {}).get("plan_version_number")
+    if requested_plan_code is not None and result.plan_code != requested_plan_code:
+        return False
+    if requested_plan_version is not None and result.plan_version_number != requested_plan_version:
+        return False
     return True
 
 
@@ -284,6 +293,12 @@ def _manual_reason(change: PendingProductChange, mapping: OrganizationMapping, p
         return "unclear_confirmation"
     requested = (change.payload or {}).get("requested_intended_service_status")
     if requested and result.current_product_value and result.current_product_value != requested:
+        return "contradictory_product_value"
+    requested_plan_code = (change.payload or {}).get("plan_code")
+    requested_plan_version = (change.payload or {}).get("plan_version_number")
+    if requested_plan_code is not None and result.plan_code != requested_plan_code:
+        return "contradictory_product_value"
+    if requested_plan_version is not None and result.plan_version_number != requested_plan_version:
         return "contradictory_product_value"
     if result.success and not result.sync_confirmed:
         return "unclear_confirmation"
@@ -440,6 +455,7 @@ def _finalize(
     if _is_confirmed(change, mapping, product, result):
         change.status = PendingChangeStatus.confirmed_and_synced
         change.last_error = None
+        confirm_assignment_from_product(db, change, result)
         product.last_successful_sync_at = change.last_delivery_at
         product.sync_status = SyncStatus.pending if _has_unresolved_product_changes(db, product.id, change.id) else SyncStatus.synced
         _audit(db, admin=admin, action="pending_change.delivery.confirmed", change=change, product_id=product.id, result_status=AuditResultStatus.success, payload=summary)

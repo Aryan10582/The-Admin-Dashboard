@@ -73,6 +73,7 @@ def test_phase_2_core_schema_records_can_be_created(db_session: Session) -> None
     db_session.commit()
 
     plan = BillingPlan(
+        plan_code="starter",
         name="Starter",
         product_deployment_id=product_deployment.id,
         currency="INR",
@@ -83,6 +84,7 @@ def test_phase_2_core_schema_records_can_be_created(db_session: Session) -> None
     plan_version = BillingPlanVersion(
         billing_plan_id=plan.id,
         version_number=1,
+        currency="INR",
         billing_mode_compatibility=BillingMode.prepaid_credits,
         pricing_structure={"type": "flat"},
         price=Decimal("499.00"),
