@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.product_secrets import validate_product_secret_encryption_key
 from app.core.security import hash_password
 from app.models.admin import Admin
 
@@ -33,6 +34,7 @@ def seed_admin(db: Session) -> None:
 
 def create_app() -> FastAPI:
     configure_logging()
+    validate_product_secret_encryption_key()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

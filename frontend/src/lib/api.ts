@@ -35,7 +35,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
-    throw new Error(errorBody?.error?.message ?? "Invalid email or password");
+    throw new Error(errorBody?.error?.message ?? "Request failed");
   }
 
   return response.json() as Promise<T>;

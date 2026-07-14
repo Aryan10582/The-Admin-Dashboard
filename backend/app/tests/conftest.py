@@ -12,6 +12,7 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["ADMIN_EMAIL"] = "admin@example.com"
 os.environ["ADMIN_PASSWORD"] = "correct-password"
 os.environ["SESSION_SECRET"] = "test-session-secret"
+os.environ["PRODUCT_SECRET_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 from app.api.deps import get_db
 from app.main import create_app, seed_admin

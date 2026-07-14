@@ -8,7 +8,7 @@ class ProductAdminContract(Protocol):
     async def get_organizations(self) -> list[dict]:
         ...
 
-    async def get_organization_detail(self, product_organization_id: str) -> dict:
+    async def get_organization_detail(self, product_organization_id: str) -> object:
         ...
 
     async def get_billing(self, product_organization_id: str) -> dict:

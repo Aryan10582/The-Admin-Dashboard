@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import CompatibilityStatus, Environment, ProductHealthStatus, SyncStatus
@@ -19,6 +19,7 @@ class ProductDeployment(Base, TimestampMixin):
     api_base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     health_check_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     admin_api_version: Mapped[str] = mapped_column(String(50), default="v1", nullable=False)
+    admin_api_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     supported_endpoints: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     compatibility_status: Mapped[CompatibilityStatus] = mapped_column(
         Enum(CompatibilityStatus),
@@ -36,4 +37,10 @@ class ProductDeployment(Base, TimestampMixin):
     last_successful_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_failed_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_successful_health_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_health_response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @property
+    def secret_configured(self) -> bool:
+        return bool(self.admin_api_secret_encrypted)

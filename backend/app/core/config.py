@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     cookie_samesite: str = "lax"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    product_health_timeout_seconds: float = 10
+    product_health_slow_threshold_ms: int = 2000
+    product_secret_encryption_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
