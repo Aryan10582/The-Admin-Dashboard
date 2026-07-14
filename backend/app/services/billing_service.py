@@ -26,6 +26,7 @@ from app.schemas.billing import (
     ManualPaymentRequest,
 )
 from app.services.organization_service import require_verified_mapping
+from app.services.service_enforcement import maybe_auto_pause_for_zero_balance
 
 
 @dataclass(frozen=True)
@@ -333,6 +334,13 @@ def deduct_credits(db: Session, organization_id: UUID, payload: DeductCreditsReq
             outstanding_after=organization.outstanding_dues,
         )
         change = _pending_change(db, organization=organization, action="credits.deduct", reason=payload.reason, admin=admin, idempotency_key=idempotency_key, ledger_entry=ledger)
+        maybe_auto_pause_for_zero_balance(
+            db,
+            organization=organization,
+            reason=payload.reason,
+            admin=admin,
+            idempotency_key=idempotency_key,
+        )
         _add_audit(db, admin=admin, action="billing.credits.deduct", organization=organization, ledger_entry=ledger, pending_change=change)
         db.flush()
         response = _result_payload(organization, ledger, idempotency_key, change)

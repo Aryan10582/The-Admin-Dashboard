@@ -21,13 +21,17 @@ from app.models.admin import Admin
 from app.schemas.organization import (
     MappingVerificationRead,
     OrganizationCreate,
+    OrganizationLinkFromProductRequest,
     OrganizationListResponse,
     OrganizationMappingRead,
     OrganizationMappingUpdate,
+    ProductOrganizationLookupRead,
+    ProductOrganizationLookupRequest,
     OrganizationRead,
     OrganizationUpdate,
 )
 from app.schemas.billing import AddCreditsRequest, DeductCreditsRequest, LedgerListResponse, ManualPaymentRequest, BillingLedgerEntryRead
+from app.schemas.service_enforcement import ReasonRequest, ServiceEnforcementUpdate
 from app.services.billing_service import (
     LedgerFilters,
     add_credits,
@@ -41,11 +45,15 @@ from app.services.organization_service import (
     create_organization,
     get_mapping,
     get_organization,
+    fetch_product_organization_for_link,
+    link_organization_from_product,
     list_organizations,
     update_organization,
     upsert_mapping,
     verify_mapping,
 )
+from app.services.service_enforcement import apply_service_action, get_service_enforcement, update_service_enforcement_config
+from app.services.sync_service import sync_organization
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -117,6 +125,30 @@ async def organizations_create(
     return {"success": True, "data": _serialize_organization(organization)}
 
 
+@router.post("/product-lookup")
+async def organizations_product_lookup(
+    payload: ProductOrganizationLookupRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    lookup = await fetch_product_organization_for_link(db, payload, current_admin)
+    return {"success": True, "data": ProductOrganizationLookupRead.model_validate(lookup).model_dump(mode="json")}
+
+
+@router.post("/link-from-product", status_code=status.HTTP_201_CREATED)
+async def organizations_link_from_product(
+    payload: OrganizationLinkFromProductRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    organization, verification_success, verification_message = await link_organization_from_product(db, payload, current_admin)
+    return {
+        "success": True,
+        "data": _serialize_organization(organization),
+        "meta": {"verification_success": verification_success, "verification_message": verification_message},
+    }
+
+
 @router.get("/{organization_id}")
 async def organizations_detail(
     organization_id: UUID,
@@ -136,6 +168,35 @@ async def organizations_billing(
     current_admin: Admin = Depends(get_current_admin),
 ) -> dict:
     return {"success": True, "data": get_billing_summary(db, organization_id)}
+
+
+@router.post("/{organization_id}/sync")
+async def organizations_sync(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": await sync_organization(db, organization_id, current_admin)}
+
+
+@router.get("/{organization_id}/service-enforcement")
+async def organizations_service_enforcement(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": get_service_enforcement(db, organization_id)}
+
+
+@router.patch("/{organization_id}/service-enforcement")
+async def organizations_service_enforcement_update(
+    organization_id: UUID,
+    payload: ServiceEnforcementUpdate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": update_service_enforcement_config(db, organization_id)}
 
 
 @router.get("/{organization_id}/ledger")
@@ -203,6 +264,61 @@ async def organizations_manual_payment(
     idempotency_key: str = Depends(require_idempotency_key),
 ) -> dict:
     return {"success": True, "data": record_manual_payment(db, organization_id, payload, idempotency_key, current_admin)}
+
+
+@router.post("/{organization_id}/service/pause")
+async def organizations_service_pause(
+    organization_id: UUID,
+    payload: ReasonRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": apply_service_action(db, organization_id=organization_id, action="service.pause", reason=payload.reason, idempotency_key=idempotency_key, admin=current_admin)}
+
+
+@router.post("/{organization_id}/service/resume")
+async def organizations_service_resume(
+    organization_id: UUID,
+    payload: ReasonRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": apply_service_action(db, organization_id=organization_id, action="service.resume", reason=payload.reason, idempotency_key=idempotency_key, admin=current_admin)}
+
+
+@router.post("/{organization_id}/service/disable")
+async def organizations_service_disable(
+    organization_id: UUID,
+    payload: ReasonRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": apply_service_action(db, organization_id=organization_id, action="service.disable", reason=payload.reason, idempotency_key=idempotency_key, admin=current_admin)}
+
+
+@router.post("/{organization_id}/manual-continuation/apply")
+async def organizations_manual_continuation_apply(
+    organization_id: UUID,
+    payload: ReasonRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": apply_service_action(db, organization_id=organization_id, action="service.manual_continuation.apply", reason=payload.reason, idempotency_key=idempotency_key, admin=current_admin)}
+
+
+@router.post("/{organization_id}/manual-continuation/remove")
+async def organizations_manual_continuation_remove(
+    organization_id: UUID,
+    payload: ReasonRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": apply_service_action(db, organization_id=organization_id, action="service.manual_continuation.remove", reason=payload.reason, idempotency_key=idempotency_key, admin=current_admin)}
 
 
 @router.get("/{organization_id}/mapping")

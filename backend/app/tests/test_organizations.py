@@ -138,8 +138,8 @@ def test_organization_create_list_detail_and_update_work(client: TestClient, db_
     assert update_response.status_code == 200
     updated = update_response.json()["data"]
     assert updated["name"] == "Acme Clinic Updated"
-    assert updated["service_status"] == "running"
-    assert updated["service_enforcement_status"] == "running"
+    assert updated["service_status"] == "pending_sync"
+    assert updated["service_enforcement_status"] == "pending_sync"
 
     actions = db_session.scalars(select(AuditLog.action)).all()
     assert "organization.created" in actions
@@ -222,6 +222,8 @@ def test_mapping_can_be_created_or_updated_and_id_change_invalidates_verificatio
     )
     assert response.status_code == 200
     assert response.json()["data"]["product_organization_id"] == "prod-org-1"
+    assert response.json()["data"]["mapping_status"] == "requires_manual_review"
+    assert response.json()["data"]["last_verified_at"] is None
 
     mapping = db_session.scalar(select(OrganizationMapping).where(OrganizationMapping.organization_id == UUID(created["id"])))
     assert mapping is not None

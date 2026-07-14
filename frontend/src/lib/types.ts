@@ -33,6 +33,8 @@ export type ProductDeployment = {
   api_base_url: string;
   health_check_url: string | null;
   admin_api_version: string;
+  organization_list_path: string | null;
+  organization_detail_path_template: string | null;
   supported_endpoints: Record<string, unknown> | null;
   compatibility_status: string;
   is_active: boolean;
@@ -45,6 +47,9 @@ export type ProductDeployment = {
   last_successful_health_check_at: string | null;
   last_health_response_time_ms: number | null;
   last_error_message: string | null;
+  last_organization_discovery_attempt_at: string | null;
+  last_successful_organization_discovery_at: string | null;
+  last_organization_discovery_error: string | null;
   secret_configured: boolean;
   created_at: string;
   updated_at: string;
@@ -58,6 +63,8 @@ export type ProductPayload = {
   api_base_url: string;
   health_check_url?: string | null;
   admin_api_version: string;
+  organization_list_path?: string | null;
+  organization_detail_path_template?: string | null;
   is_active: boolean;
   is_under_maintenance: boolean;
   admin_api_secret?: string | null;
@@ -140,17 +147,40 @@ export type Organization = {
 };
 
 export type OrganizationPayload = {
-  central_organization_id?: string;
   name: string;
   product_deployment_id: string;
   currency: string;
   lifecycle_status: OrganizationLifecycleStatus;
   billing_mode: BillingMode;
   billing_calculation_status: BillingCalculationStatus;
-  credit_status: CreditStatus;
-  service_status: ServiceStatus;
-  sync_status: SyncStatus;
   last_active_at?: string | null;
+};
+
+export type ProductOrganizationLookup = {
+  product_deployment_id: string;
+  product_organization_id: string;
+  organization_name: string | null;
+  lifecycle_status: OrganizationLifecycleStatus | null;
+  billing_mode: BillingMode | null;
+  billing_calculation_status: BillingCalculationStatus | null;
+  currency: string | null;
+  credit_status: CreditStatus | null;
+  service_status: ServiceStatus | null;
+  credit_balance: string | null;
+  outstanding_dues: string | null;
+  last_active_at: string | null;
+  safe_metadata: Record<string, unknown> | null;
+};
+
+export type OrganizationLinkFromProductPayload = {
+  product_deployment_id: string;
+  product_organization_id: string;
+  reason?: string | null;
+  manual_name?: string | null;
+  manual_currency?: string | null;
+  manual_lifecycle_status?: OrganizationLifecycleStatus | null;
+  manual_billing_mode?: BillingMode | null;
+  manual_billing_calculation_status?: BillingCalculationStatus | null;
 };
 
 export type OrganizationListPayload = {
@@ -245,4 +275,215 @@ export type LedgerListPayload = {
   total: number;
   limit: number;
   offset: number;
+};
+
+export type PendingChangeStatus =
+  | "saved"
+  | "sent_to_product"
+  | "accepted_by_product"
+  | "confirmed_and_synced"
+  | "failed"
+  | "pending_retry"
+  | "cancelled"
+  | "requires_manual_resolution";
+
+export type PendingChange = {
+  id: string;
+  action: string;
+  organization_id: string | null;
+  product_deployment_id: string;
+  product_name: string | null;
+  region: string | null;
+  environment: Environment | null;
+  status: PendingChangeStatus;
+  retry_count: number;
+  last_retry_at: string | null;
+  last_error: string | null;
+  admin_id: string | null;
+  idempotency_key: string | null;
+  reason: string | null;
+  payload: Record<string, unknown> | null;
+  delivery_attempt_id: string | null;
+  delivery_started_at: string | null;
+  last_delivery_at: string | null;
+  product_request_id: string | null;
+  product_api_version: string | null;
+  safe_confirmation_summary: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  can_cancel: boolean;
+  can_retry: boolean;
+};
+
+export type PendingChangeListPayload = {
+  items: PendingChange[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ServiceEnforcement = {
+  organization_id: string;
+  product_deployment_id: string;
+  intended_service_status: ServiceStatus;
+  evaluated_service_status: ServiceStatus;
+  product_confirmation_status: SyncStatus;
+  billing_mode: BillingMode;
+  credit_balance: string;
+  outstanding_dues: string;
+  credit_status: CreditStatus;
+  manual_continuation_enabled: boolean;
+  manual_continuation_reason: string | null;
+  latest_pending_change: {
+    id: string;
+    action: string;
+    status: PendingChangeStatus;
+    created_at: string;
+    reason: string | null;
+  } | null;
+};
+
+export type ServiceActionResult = {
+  organization_id: string;
+  intended_service_status: ServiceStatus;
+  product_confirmation_status: SyncStatus;
+  manual_continuation_enabled: boolean;
+  pending_product_change_id: string;
+  idempotency_key: string;
+};
+
+export type DeliveryActionResult = {
+  pending_change_id: string;
+  action: string;
+  status: PendingChangeStatus | "blocked";
+  product_request_id: string | null;
+  safe_result: Record<string, unknown> | null;
+  error: string | null;
+};
+
+export type ProductSyncResult = {
+  product_id: string;
+  health?: {
+    health_status: ProductHealthStatus;
+    last_checked_at: string | null;
+  } | null;
+  examined_count: number;
+  confirmed_count?: number;
+  pending_retry_count?: number;
+  manual_resolution_count?: number;
+  blocked_count: number;
+  results: DeliveryActionResult[];
+};
+
+export type OrganizationSyncResult = {
+  organization_id: string;
+  results: DeliveryActionResult[];
+};
+
+export type MappingSyncResult = {
+  product_id: string;
+  checked: number;
+  failed: number;
+};
+
+export type SyncStatusItem = {
+  product_id: string;
+  product_name: string;
+  region: string;
+  environment: Environment;
+  health_status: ProductHealthStatus;
+  compatibility_status: string;
+  last_health_check: string | null;
+  last_confirmed_delivery: string | null;
+  counts: Record<PendingChangeStatus, number>;
+  latest_failure: string | null;
+  has_ordering_blocker: boolean;
+};
+
+export type SyncStatusPayload = {
+  items: SyncStatusItem[];
+};
+
+export type FailureLogItem = {
+  id: string;
+  product_deployment_id: string | null;
+  organization_id: string | null;
+  pending_change_id: string | null;
+  action_attempted: string;
+  error_code: string | null;
+  error_message: string;
+  retry_count: number;
+  current_status: string;
+  product_request_id: string | null;
+  created_at: string;
+};
+
+export type FailureLogListPayload = {
+  items: FailureLogItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type OrganizationDiscoveryStatus =
+  | "discovered"
+  | "already_mapped"
+  | "imported"
+  | "ignored"
+  | "conflict"
+  | "missing_required_data"
+  | "requires_manual_review"
+  | "no_longer_returned";
+
+export type ProductOrganizationDiscovery = {
+  id: string;
+  product_deployment_id: string;
+  product_organization_id: string;
+  organization_name: string;
+  lifecycle_status_snapshot: OrganizationLifecycleStatus | null;
+  billing_mode_snapshot: BillingMode | null;
+  billing_calculation_status_snapshot: BillingCalculationStatus | null;
+  currency_snapshot: string | null;
+  credit_status_snapshot: CreditStatus | null;
+  credit_balance_snapshot: string | null;
+  outstanding_dues_snapshot: string | null;
+  service_status_snapshot: ServiceStatus | null;
+  product_active_status: boolean | null;
+  product_api_version: string | null;
+  product_request_id: string | null;
+  product_updated_at: string | null;
+  last_active_at: string | null;
+  last_seen_at: string | null;
+  discovery_status: OrganizationDiscoveryStatus;
+  central_organization_id: string | null;
+  safe_metadata: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DiscoveryListPayload = {
+  items: ProductOrganizationDiscovery[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type DiscoverySummary = {
+  discovered_count: number;
+  newly_discovered_count: number;
+  already_mapped_count: number;
+  conflict_count: number;
+  invalid_count: number;
+  pages_fetched: number;
+  safe_failures: string[];
+};
+
+export type ImportOrganizationsResult = {
+  items: Array<{
+    product_organization_id: string;
+    status: string;
+    organization_id: string | null;
+    mapping_status: string | null;
+    message: string | null;
+  }>;
 };

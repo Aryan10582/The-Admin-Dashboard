@@ -1,17 +1,24 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.core.enums import AuditResultStatus, FailureStatus, ProductHealthStatus
+from app.core.enums import AuditResultStatus, FailureStatus, IdempotencyRecordStatus, ProductHealthStatus
 from app.core.product_secrets import decrypt_product_secret, encrypt_product_secret
 from app.integrations.product_admin_client import ProductHealthResult
 from app.models.admin import Admin
 from app.models.audit import AuditLog
+from app.models.billing import BillingLedgerEntry, ManualPayment
+from app.models.discovery import ProductOrganizationDiscovery
 from app.models.failure_log import FailureLog
+from app.models.idempotency import IdempotencyRecord
+from app.models.organization import Organization, OrganizationMapping
+from app.models.pending_change import PendingProductChange
 from app.models.product import ProductDeployment
+from app.models.service_enforcement import ServiceEnforcementRule
 from app.schemas.product import ProductDeploymentCreate, ProductDeploymentUpdate
 from app.services.product_client import build_product_client
 
@@ -32,6 +39,8 @@ def _safe_product_snapshot(product: ProductDeployment) -> dict:
         "api_base_url": product.api_base_url,
         "health_check_url": product.health_check_url,
         "admin_api_version": product.admin_api_version,
+        "organization_list_path": product.organization_list_path,
+        "organization_detail_path_template_configured": bool(product.organization_detail_path_template),
         "is_active": product.is_active,
         "is_under_maintenance": product.is_under_maintenance,
         "health_status": product.health_status.value,
@@ -96,6 +105,32 @@ def get_product(db: Session, product_id: UUID) -> ProductDeployment | None:
     return db.get(ProductDeployment, product_id)
 
 
+def product_dependency_summary(db: Session, product_id: UUID) -> dict:
+    org_ids = list(db.scalars(select(Organization.id).where(Organization.product_deployment_id == product_id)))
+    return {
+        "organizations": len(org_ids),
+        "mappings": db.scalar(select(func.count()).select_from(OrganizationMapping).where(OrganizationMapping.product_deployment_id == product_id)) or 0,
+        "discovered_organizations": db.scalar(select(func.count()).select_from(ProductOrganizationDiscovery).where(ProductOrganizationDiscovery.product_deployment_id == product_id)) or 0,
+        "ledger_entries": db.scalar(select(func.count()).select_from(BillingLedgerEntry).where(BillingLedgerEntry.product_deployment_id == product_id)) or 0,
+        "manual_payments": db.scalar(select(func.count()).select_from(ManualPayment).where(ManualPayment.product_deployment_id == product_id)) or 0,
+        "pending_changes": db.scalar(select(func.count()).select_from(PendingProductChange).where(PendingProductChange.product_deployment_id == product_id)) or 0,
+        "failure_logs": db.scalar(select(func.count()).select_from(FailureLog).where(FailureLog.product_deployment_id == product_id)) or 0,
+        "audit_logs": db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.product_deployment_id == product_id)) or 0,
+        "idempotency_records": db.scalar(select(func.count()).select_from(IdempotencyRecord).where(IdempotencyRecord.organization_id.in_(org_ids))) if org_ids else 0,
+        "service_rules": db.scalar(select(func.count()).select_from(ServiceEnforcementRule).where(ServiceEnforcementRule.organization_id.in_(org_ids))) if org_ids else 0,
+    }
+
+
+def test_purge_preview(db: Session, product: ProductDeployment) -> dict:
+    return {
+        "enabled": settings.environment != "production" and settings.allow_destructive_test_purge,
+        "environment": settings.environment,
+        "remote_product_deleted": False,
+        "dependency_summary": product_dependency_summary(db, product.id),
+        "confirmation_required": [product.product_name, str(product.id)],
+    }
+
+
 def create_product(db: Session, payload: ProductDeploymentCreate, admin: Admin) -> ProductDeployment:
     product_data = payload.model_dump()
     secret = product_data.pop("admin_api_secret", None)
@@ -143,6 +178,88 @@ def update_product(db: Session, product: ProductDeployment, payload: ProductDepl
     db.commit()
     db.refresh(product)
     return product
+
+
+def delete_product_if_unused(db: Session, product: ProductDeployment, admin: Admin) -> dict:
+    summary = product_dependency_summary(db, product.id)
+    if any(summary.values()):
+        _add_audit_log(
+            db,
+            admin_id=admin.id,
+            action="product.delete_blocked",
+            product_id=product.id,
+            result_status=AuditResultStatus.failure,
+            new_value={"dependency_summary": summary},
+            failure_message="Product deployment has dependent Admin Dashboard records",
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "Product deployment has dependencies; archive/deactivate instead", "dependency_summary": summary},
+        )
+    deleted_product_snapshot = _safe_product_snapshot(product)
+    db.delete(product)
+    db.flush()
+    db.add(
+        AuditLog(
+            admin_id=admin.id,
+            action="product.deleted",
+            product_deployment_id=None,
+            new_value=deleted_product_snapshot,
+            result_status=AuditResultStatus.success,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+    return {"deleted": True, "dependency_summary": summary}
+
+
+def purge_test_product_data(db: Session, product: ProductDeployment, *, reason: str, confirmation: str, idempotency_key: str, admin: Admin) -> dict:
+    if settings.environment == "production" or not settings.allow_destructive_test_purge:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Destructive test purge is disabled")
+    if "prod" in settings.database_url.lower() or "production" in settings.database_url.lower():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Destructive test purge refuses production-looking database configuration")
+    if confirmation not in {product.product_name, str(product.id)}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Confirmation must match product name or deployment ID")
+    if not reason.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Reason is required")
+    replay = db.scalar(select(IdempotencyRecord).where(IdempotencyRecord.idempotency_key == idempotency_key))
+    if replay is not None and replay.response_json is not None:
+        return replay.response_json
+
+    summary = product_dependency_summary(db, product.id)
+    org_ids = list(db.scalars(select(Organization.id).where(Organization.product_deployment_id == product.id)))
+    record = IdempotencyRecord(
+        idempotency_key=idempotency_key,
+        action_type=f"product.purge_test_data:{product.id}",
+        response_json=None,
+        status=IdempotencyRecordStatus.started,
+        created_at=datetime.now(timezone.utc),
+        admin_id=admin.id,
+        organization_id=None,
+    )
+    db.add(record)
+    for model, condition in (
+        (ServiceEnforcementRule, ServiceEnforcementRule.organization_id.in_(org_ids) if org_ids else None),
+        (BillingLedgerEntry, BillingLedgerEntry.product_deployment_id == product.id),
+        (ManualPayment, ManualPayment.product_deployment_id == product.id),
+        (PendingProductChange, PendingProductChange.product_deployment_id == product.id),
+        (ProductOrganizationDiscovery, ProductOrganizationDiscovery.product_deployment_id == product.id),
+        (OrganizationMapping, OrganizationMapping.product_deployment_id == product.id),
+        (FailureLog, FailureLog.product_deployment_id == product.id),
+        (AuditLog, AuditLog.product_deployment_id == product.id),
+        (IdempotencyRecord, IdempotencyRecord.organization_id.in_(org_ids) if org_ids else None),
+        (Organization, Organization.product_deployment_id == product.id),
+    ):
+        if condition is not None:
+            for row in list(db.scalars(select(model).where(condition))):
+                db.delete(row)
+    payload = {"purged": True, "dependency_summary": summary, "remote_product_deleted": False}
+    record.status = IdempotencyRecordStatus.completed
+    record.response_json = payload
+    db.delete(product)
+    db.commit()
+    return payload
 
 
 def classify_health(product: ProductDeployment, result: ProductHealthResult) -> ProductHealthStatus:

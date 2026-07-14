@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     product_health_timeout_seconds: float = 10
     product_health_slow_threshold_ms: int = 2000
     product_secret_encryption_key: str | None = None
+    allow_destructive_test_purge: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

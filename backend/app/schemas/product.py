@@ -28,6 +28,26 @@ def normalize_admin_url(value: str | None) -> str | None:
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
+def validate_relative_product_path(value: str | None, *, require_placeholder: bool = False) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    parsed = urlsplit(stripped)
+    if parsed.scheme or parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("Path must be relative to the product API base URL")
+    if not stripped.startswith("/"):
+        raise ValueError("Path must start with /")
+    if ".." in parsed.path.split("/"):
+        raise ValueError("Path cannot contain path traversal")
+    if parsed.fragment:
+        raise ValueError("Path cannot contain a fragment")
+    if require_placeholder and "{organization_id}" not in stripped:
+        raise ValueError("Path template must include {organization_id}")
+    return stripped
+
+
 class ProductDeploymentBase(BaseModel):
     product_name: str = Field(min_length=1, max_length=150)
     region: str = Field(min_length=1, max_length=80)
@@ -36,6 +56,8 @@ class ProductDeploymentBase(BaseModel):
     api_base_url: str
     health_check_url: str | None = None
     admin_api_version: str = Field(default="v1", min_length=1, max_length=50)
+    organization_list_path: str | None = None
+    organization_detail_path_template: str | None = None
     is_active: bool = True
     is_under_maintenance: bool = False
 
@@ -43,6 +65,16 @@ class ProductDeploymentBase(BaseModel):
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
         return normalize_admin_url(value)
+
+    @field_validator("organization_list_path")
+    @classmethod
+    def validate_org_list_path(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value)
+
+    @field_validator("organization_detail_path_template")
+    @classmethod
+    def validate_org_detail_template(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value, require_placeholder=True)
 
     @field_validator("currency")
     @classmethod
@@ -71,6 +103,8 @@ class ProductDeploymentUpdate(BaseModel):
     api_base_url: str | None = None
     health_check_url: str | None = None
     admin_api_version: str | None = Field(default=None, min_length=1, max_length=50)
+    organization_list_path: str | None = None
+    organization_detail_path_template: str | None = None
     is_active: bool | None = None
     is_under_maintenance: bool | None = None
     admin_api_secret: str | None = Field(default=None, max_length=4096)
@@ -79,6 +113,16 @@ class ProductDeploymentUpdate(BaseModel):
     @classmethod
     def validate_url(cls, value: str | None) -> str | None:
         return normalize_admin_url(value)
+
+    @field_validator("organization_list_path")
+    @classmethod
+    def validate_org_list_path(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value)
+
+    @field_validator("organization_detail_path_template")
+    @classmethod
+    def validate_org_detail_template(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value, require_placeholder=True)
 
     @field_validator("currency")
     @classmethod
@@ -102,6 +146,8 @@ class ProductDeploymentRead(BaseModel):
     api_base_url: str
     health_check_url: str | None
     admin_api_version: str
+    organization_list_path: str | None
+    organization_detail_path_template: str | None
     supported_endpoints: dict[str, Any] | None
     compatibility_status: CompatibilityStatus
     is_active: bool
@@ -114,6 +160,9 @@ class ProductDeploymentRead(BaseModel):
     last_successful_health_check_at: datetime | None
     last_health_response_time_ms: int | None
     last_error_message: str | None
+    last_organization_discovery_attempt_at: datetime | None
+    last_successful_organization_discovery_at: datetime | None
+    last_organization_discovery_error: str | None
     secret_configured: bool
     created_at: datetime
     updated_at: datetime
@@ -128,3 +177,8 @@ class ProductHealthCheckRead(BaseModel):
     success: bool
     error_message: str | None = None
     checked_at: datetime
+
+
+class ProductPurgeRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+    confirmation: str = Field(min_length=1, max_length=255)

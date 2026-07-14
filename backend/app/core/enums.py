@@ -75,6 +75,17 @@ class MappingStatus(StrEnum):
     requires_manual_review = "requires_manual_review"
 
 
+class OrganizationDiscoveryStatus(StrEnum):
+    discovered = "discovered"
+    already_mapped = "already_mapped"
+    imported = "imported"
+    ignored = "ignored"
+    conflict = "conflict"
+    missing_required_data = "missing_required_data"
+    requires_manual_review = "requires_manual_review"
+    no_longer_returned = "no_longer_returned"
+
+
 class PendingChangeStatus(StrEnum):
     saved = "saved"
     sent_to_product = "sent_to_product"

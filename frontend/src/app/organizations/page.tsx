@@ -3,31 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/status/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { listOrganizations, createOrganization, type OrganizationFilters } from "@/lib/organizations";
-import { listProducts } from "@/lib/products";
-import type { OrganizationPayload } from "@/lib/types";
+import { fetchProductOrganization, linkOrganizationFromProduct, listOrganizations, type OrganizationFilters } from "@/lib/organizations";
+import { importAllProductOrganizations, importProductOrganizations, listDiscoveredOrganizations, listProducts } from "@/lib/products";
 
 const limit = 10;
-
-const defaultValues: OrganizationPayload = {
-  central_organization_id: "",
-  name: "",
-  product_deployment_id: "",
-  currency: "USD",
-  lifecycle_status: "trial",
-  billing_mode: "prepaid_credits",
-  billing_calculation_status: "usage_tracking_only",
-  credit_status: "not_applicable",
-  service_status: "pending_sync",
-  sync_status: "pending",
-  last_active_at: null
-};
 
 function statusTone(status: string) {
   if (["active", "healthy_balance", "running", "synced"].includes(status)) return "success";
@@ -42,17 +26,58 @@ export default function OrganizationsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(0);
   const [filters, setFilters] = useState<OrganizationFilters>({});
-  const form = useForm<OrganizationPayload>({ defaultValues });
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [productOrganizationId, setProductOrganizationId] = useState("");
+  const [manualReason, setManualReason] = useState("");
+  const [manualName, setManualName] = useState("");
+  const [manualCurrency, setManualCurrency] = useState("USD");
+  const [manualBillingMode, setManualBillingMode] = useState("prepaid_credits");
 
   const queryFilters = useMemo(() => ({ ...filters, limit, offset: page * limit }), [filters, page]);
   const organizationsQuery = useQuery({ queryKey: ["organizations", queryFilters], queryFn: () => listOrganizations(queryFilters) });
   const productsQuery = useQuery({ queryKey: ["products"], queryFn: listProducts });
+  const discoveriesQuery = useQuery({
+    queryKey: ["product-discoveries", selectedProductId],
+    queryFn: () => listDiscoveredOrganizations(selectedProductId),
+    enabled: Boolean(selectedProductId)
+  });
 
-  const createMutation = useMutation({
-    mutationFn: createOrganization,
+  const lookupMutation = useMutation({
+    mutationFn: () => fetchProductOrganization({ product_deployment_id: selectedProductId, product_organization_id: productOrganizationId }),
+    onSuccess: (response) => {
+      setManualName(response.data.organization_name ?? "");
+      setManualCurrency(response.data.currency ?? "USD");
+      setManualBillingMode(response.data.billing_mode ?? "prepaid_credits");
+    }
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: () =>
+      linkOrganizationFromProduct({
+        product_deployment_id: selectedProductId,
+        product_organization_id: productOrganizationId,
+        reason: manualReason || null,
+        manual_name: manualName || null,
+        manual_currency: manualCurrency || null,
+        manual_billing_mode: manualBillingMode as "prepaid_credits" | "postpaid_manual_settlement" | "free_internal_testing"
+      }),
     onSuccess: async () => {
-      form.reset(defaultValues);
       await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await queryClient.invalidateQueries({ queryKey: ["product-discoveries", selectedProductId] });
+    }
+  });
+  const importMutation = useMutation({
+    mutationFn: (productOrgId: string) => importProductOrganizations(selectedProductId, [productOrgId]),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await queryClient.invalidateQueries({ queryKey: ["product-discoveries", selectedProductId] });
+    }
+  });
+  const importAllMutation = useMutation({
+    mutationFn: () => importAllProductOrganizations(selectedProductId, productsQuery.data?.data.find((product) => product.id === selectedProductId)?.product_name ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      await queryClient.invalidateQueries({ queryKey: ["product-discoveries", selectedProductId] });
     }
   });
 
@@ -106,11 +131,10 @@ export default function OrganizationsPage() {
         </section>
 
         <section className="rounded-md border border-border bg-white p-5">
-          <h2 className="text-base font-semibold">Create Organization</h2>
-          <form className="mt-4 grid gap-4 md:grid-cols-3" onSubmit={form.handleSubmit((values) => createMutation.mutate(values))}>
-            <Input placeholder="Central organization ID" {...form.register("central_organization_id", { required: true })} />
-            <Input placeholder="Organization name" {...form.register("name", { required: true })} />
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("product_deployment_id", { required: true })}>
+          <h2 className="text-base font-semibold">Add / Link Organization</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Central organization IDs and technical sync statuses are generated and managed by the backend.</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)}>
               <option value="">Product deployment</option>
               {productsQuery.data?.data.map((product) => (
                 <option key={product.id} value={product.id}>
@@ -118,52 +142,85 @@ export default function OrganizationsPage() {
                 </option>
               ))}
             </select>
-            <Input placeholder="Currency" maxLength={3} {...form.register("currency", { required: true })} />
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("lifecycle_status")}>
-              <option value="trial">trial</option>
-              <option value="active">active</option>
-              <option value="suspended">suspended</option>
-              <option value="churned">churned</option>
-              <option value="internal_testing">internal_testing</option>
-              <option value="demo">demo</option>
-            </select>
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("billing_mode")}>
+            <Input placeholder="Product Organization ID" value={productOrganizationId} onChange={(event) => setProductOrganizationId(event.target.value)} />
+            <Button type="button" variant="secondary" disabled={!selectedProductId || !productOrganizationId || lookupMutation.isPending} onClick={() => lookupMutation.mutate()}>
+              {lookupMutation.isPending ? "Fetching..." : "Fetch Organization from Product"}
+            </Button>
+            <Input placeholder="Organization name" value={manualName} onChange={(event) => setManualName(event.target.value)} />
+            <Input placeholder="Currency" maxLength={3} value={manualCurrency} onChange={(event) => setManualCurrency(event.target.value.toUpperCase())} />
+            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" value={manualBillingMode} onChange={(event) => setManualBillingMode(event.target.value)}>
               <option value="prepaid_credits">prepaid_credits</option>
               <option value="postpaid_manual_settlement">postpaid_manual_settlement</option>
               <option value="free_internal_testing">free_internal_testing</option>
             </select>
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("credit_status")}>
-              <option value="not_applicable">not_applicable</option>
-              <option value="healthy_balance">healthy_balance</option>
-              <option value="low_balance">low_balance</option>
-              <option value="zero_balance">zero_balance</option>
-              <option value="balance_exhausted">balance_exhausted</option>
-              <option value="outstanding_dues">outstanding_dues</option>
-            </select>
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("service_status")}>
-              <option value="pending_sync">pending_sync</option>
-              <option value="running">running</option>
-              <option value="paused">paused</option>
-              <option value="disabled">disabled</option>
-            </select>
-            <select className="h-10 rounded-md border border-border bg-white px-3 text-sm" {...form.register("sync_status")}>
-              <option value="pending">pending</option>
-              <option value="synced">synced</option>
-              <option value="failed">failed</option>
-              <option value="retrying">retrying</option>
-            </select>
+            <Input placeholder="Reason for manual override/fallback" value={manualReason} onChange={(event) => setManualReason(event.target.value)} />
             <div className="md:col-span-3">
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Creating..." : "Create"}
+              {lookupMutation.data ? (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Fetched {lookupMutation.data.data.organization_name ?? "unnamed organization"} / {lookupMutation.data.data.currency ?? "missing currency"} / {lookupMutation.data.data.billing_mode ?? "missing billing mode"}.
+                </p>
+              ) : null}
+              {lookupMutation.isError ? <p className="mb-3 text-sm text-red-700">{lookupMutation.error.message}. Enter business fields and a reason to use manual fallback.</p> : null}
+              <Button type="button" disabled={!selectedProductId || !productOrganizationId || linkMutation.isPending} onClick={() => linkMutation.mutate()}>
+                {linkMutation.isPending ? "Linking..." : "Confirm Import / Link"}
               </Button>
-              {createMutation.isError ? <p className="mt-2 text-sm text-red-700">{createMutation.error.message}</p> : null}
+              {linkMutation.isError ? <p className="mt-2 text-sm text-red-700">{linkMutation.error.message}</p> : null}
+              {linkMutation.data ? <p className="mt-2 text-sm text-muted-foreground">Linked. Verification {linkMutation.data.meta?.verification_success ? "succeeded" : "is pending or failed"}.</p> : null}
             </div>
-          </form>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-border bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div>
+              <h2 className="text-base font-semibold">Discovered Organizations</h2>
+              <p className="text-sm text-muted-foreground">Product-side identities are shown with deployment context; names are not used as identifiers.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" disabled={!selectedProductId || discoveriesQuery.isFetching} onClick={() => discoveriesQuery.refetch()}>
+                Refresh Status
+              </Button>
+              <Button type="button" variant="secondary" disabled={!selectedProductId || importAllMutation.isPending} onClick={() => importAllMutation.mutate()}>
+                Import All Eligible
+              </Button>
+            </div>
+          </div>
+          {discoveriesQuery.data?.data.items.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-muted text-xs uppercase text-muted-foreground">
+                  <tr><th className="px-4 py-3">Organization</th><th className="px-4 py-3">Product Organization ID</th><th className="px-4 py-3">Initial Billing</th><th className="px-4 py-3">State</th><th className="px-4 py-3">Last Seen</th><th className="px-4 py-3" /></tr>
+                </thead>
+                <tbody>
+                  {discoveriesQuery.data.data.items.map((item) => (
+                    <tr key={item.id} className="border-t border-border">
+                      <td className="px-4 py-3">{item.organization_name}</td>
+                      <td className="px-4 py-3">{item.product_organization_id}</td>
+                      <td className="px-4 py-3">{item.billing_mode_snapshot ?? "-"} / {item.currency_snapshot ?? "-"}</td>
+                      <td className="px-4 py-3"><StatusBadge tone={statusTone(item.discovery_status)}>{item.discovery_status}</StatusBadge></td>
+                      <td className="px-4 py-3">{item.last_seen_at ? new Date(item.last_seen_at).toLocaleString() : "-"}</td>
+                      <td className="px-4 py-3">
+                        {item.central_organization_id ? (
+                          <Link className="text-primary hover:underline" href={`/organizations/${item.central_organization_id}`}>Open Managed Organization</Link>
+                        ) : (
+                          <Button type="button" variant="secondary" disabled={importMutation.isPending || !["discovered", "no_longer_returned"].includes(item.discovery_status)} onClick={() => importMutation.mutate(item.product_organization_id)}>
+                            Import
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="p-5 text-sm text-muted-foreground">{selectedProductId ? "No discovered organizations for this deployment." : "Select a product deployment to view discovered organizations."}</p>}
+          {importMutation.isError ? <p className="px-5 pb-4 text-sm text-red-700">{importMutation.error.message}</p> : null}
+          {importAllMutation.isError ? <p className="px-5 pb-4 text-sm text-red-700">{importAllMutation.error.message}</p> : null}
         </section>
 
         <section className="rounded-md border border-border bg-white">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="text-base font-semibold">Organization List</h2>
+            <h2 className="text-base font-semibold">Managed Organizations</h2>
             <p className="text-sm text-muted-foreground">{total} total</p>
           </div>
           {organizationsQuery.isLoading ? <p className="p-5 text-sm text-muted-foreground">Loading organizations...</p> : null}
@@ -175,6 +232,7 @@ export default function OrganizationsPage() {
                 <thead className="bg-muted text-xs uppercase text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3">Organization</th>
+                    <th className="px-4 py-3">Product Organization ID</th>
                     <th className="px-4 py-3">Product</th>
                     <th className="px-4 py-3">Region</th>
                     <th className="px-4 py-3">Environment</th>
@@ -191,6 +249,7 @@ export default function OrganizationsPage() {
                   {organizationsQuery.data.data.items.map((organization) => (
                     <tr key={organization.id} className="border-t border-border">
                       <td className="px-4 py-3 font-medium">{organization.name}</td>
+                      <td className="px-4 py-3">{organization.mapping?.product_organization_id ?? "-"}</td>
                       <td className="px-4 py-3">{organization.product_deployment.product_name}</td>
                       <td className="px-4 py-3">{organization.product_deployment.region}</td>
                       <td className="px-4 py-3">{organization.product_deployment.environment}</td>

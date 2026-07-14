@@ -9,5 +9,7 @@ def build_product_client(deployment: ProductDeployment, api_secret: str | None =
         api_version=deployment.admin_api_version,
         api_secret=api_secret,
         health_check_url=deployment.health_check_url,
+        organization_list_path=deployment.organization_list_path,
+        organization_detail_path_template=deployment.organization_detail_path_template,
         timeout_seconds=settings.product_health_timeout_seconds,
     )

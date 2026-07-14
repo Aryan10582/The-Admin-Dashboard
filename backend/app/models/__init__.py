@@ -4,6 +4,7 @@ from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.billing import BillingLedgerEntry, BillingPlan, BillingPlanVersion, ManualPayment, OrganizationPlanAssignment
 from app.models.failure_log import FailureLog
+from app.models.discovery import ProductOrganizationDiscovery
 from app.models.idempotency import IdempotencyRecord
 from app.models.organization import Organization, OrganizationMapping
 from app.models.pending_change import PendingProductChange
@@ -22,6 +23,7 @@ __all__ = [
     "BillingPlan",
     "BillingPlanVersion",
     "FailureLog",
+    "ProductOrganizationDiscovery",
     "IdempotencyRecord",
     "ManualPayment",
     "Organization",

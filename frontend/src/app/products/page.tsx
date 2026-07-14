@@ -19,6 +19,8 @@ const defaultValues: ProductPayload = {
   api_base_url: "",
   health_check_url: "",
   admin_api_version: "v1",
+  organization_list_path: "",
+  organization_detail_path_template: "",
   is_active: true,
   is_under_maintenance: false,
   admin_api_secret: ""
@@ -67,6 +69,8 @@ export default function ProductsPage() {
             <Input placeholder="API base URL" {...form.register("api_base_url", { required: true })} />
             <Input placeholder="Health-check URL" {...form.register("health_check_url")} />
             <Input placeholder="Admin API version" {...form.register("admin_api_version", { required: true })} />
+            <Input placeholder="Organization List API Path" {...form.register("organization_list_path")} />
+            <Input placeholder="Organization Detail Path Template" {...form.register("organization_detail_path_template")} />
             <Input type="password" placeholder="Product admin secret" {...form.register("admin_api_secret")} />
             <div className="flex items-center gap-4 text-sm">
               <label className="flex items-center gap-2">

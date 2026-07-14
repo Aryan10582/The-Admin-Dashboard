@@ -3,10 +3,12 @@ import type {
   ApiResponse,
   MappingVerificationResult,
   Organization,
+  OrganizationLinkFromProductPayload,
   OrganizationListPayload,
   OrganizationMapping,
   OrganizationMappingPayload,
-  OrganizationPayload
+  OrganizationPayload,
+  ProductOrganizationLookup
 } from "@/lib/types";
 
 export type OrganizationFilters = {
@@ -20,9 +22,6 @@ export type OrganizationFilters = {
   lifecycle_status?: string;
   billing_mode?: string;
   billing_calculation_status?: string;
-  credit_status?: string;
-  service_status?: string;
-  sync_status?: string;
   mapping_status?: string;
   search?: string;
   last_active_from?: string;
@@ -68,6 +67,23 @@ export function createOrganization(payload: OrganizationPayload) {
     method: "POST",
     json: cleanOrganizationPayload(payload)
   });
+}
+
+export function fetchProductOrganization(payload: { product_deployment_id: string; product_organization_id: string }) {
+  return apiRequest<ApiResponse<ProductOrganizationLookup>>("/organizations/product-lookup", {
+    method: "POST",
+    json: payload
+  });
+}
+
+export function linkOrganizationFromProduct(payload: OrganizationLinkFromProductPayload) {
+  return apiRequest<ApiResponse<Organization> & { meta?: { verification_success: boolean; verification_message: string | null } }>(
+    "/organizations/link-from-product",
+    {
+      method: "POST",
+      json: payload
+    }
+  );
 }
 
 export function getOrganization(organizationId: string) {

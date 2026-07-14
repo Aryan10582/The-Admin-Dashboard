@@ -20,6 +20,8 @@ class ProductDeployment(Base, TimestampMixin):
     health_check_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     admin_api_version: Mapped[str] = mapped_column(String(50), default="v1", nullable=False)
     admin_api_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organization_list_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    organization_detail_path_template: Mapped[str | None] = mapped_column(String(300), nullable=True)
     supported_endpoints: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     compatibility_status: Mapped[CompatibilityStatus] = mapped_column(
         Enum(CompatibilityStatus),
@@ -40,6 +42,9 @@ class ProductDeployment(Base, TimestampMixin):
     last_successful_health_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_organization_discovery_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_successful_organization_discovery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_organization_discovery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def secret_configured(self) -> bool:

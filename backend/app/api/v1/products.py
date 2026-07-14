@@ -1,13 +1,20 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
 from app.core.database import get_db
+from app.core.enums import OrganizationDiscoveryStatus
+from app.core.idempotency import require_idempotency_key
 from app.models.admin import Admin
-from app.schemas.product import ProductDeploymentCreate, ProductDeploymentRead, ProductDeploymentUpdate, ProductHealthCheckRead
-from app.services.product_service import create_product, get_product, list_products, run_product_health_check, update_product
+from app.models.idempotency import IdempotencyRecord
+from app.schemas.discovery import DiscoveryListResponse, ImportAllOrganizationsRequest, ImportOrganizationsRequest, ProductOrganizationDiscoveryRead
+from app.schemas.product import ProductDeploymentCreate, ProductDeploymentRead, ProductDeploymentUpdate, ProductHealthCheckRead, ProductPurgeRequest
+from app.services.discovery_service import DiscoveryFilters, discover_product_organizations, import_discoveries, list_discoveries
+from app.services.product_service import create_product, delete_product_if_unused, get_product, list_products, purge_test_product_data, run_product_health_check, test_purge_preview, update_product
+from app.services.sync_service import reverify_product_mappings, sync_product
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -31,7 +38,8 @@ async def products_create(
     current_admin: Admin = Depends(get_current_admin),
 ) -> dict:
     product = create_product(db, payload, current_admin)
-    return {"success": True, "data": _serialize_product(product)}
+    discovery = await discover_product_organizations(db, product.id, current_admin) if product.organization_list_path else None
+    return {"success": True, "data": _serialize_product(product), "meta": {"organization_discovery": discovery}}
 
 
 @router.get("/{product_id}")
@@ -60,6 +68,52 @@ async def products_update(
     return {"success": True, "data": _serialize_product(product)}
 
 
+@router.delete("/{product_id}")
+async def products_delete(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    return {"success": True, "data": delete_product_if_unused(db, product, current_admin)}
+
+
+@router.post("/{product_id}/purge-test-data")
+async def products_purge_test_data(
+    product_id: UUID,
+    payload: ProductPurgeRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    replay = db.scalar(
+        select(IdempotencyRecord).where(
+            IdempotencyRecord.idempotency_key == idempotency_key,
+            IdempotencyRecord.action_type == f"product.purge_test_data:{product_id}",
+        )
+    )
+    if replay is not None and replay.response_json is not None:
+        return {"success": True, "data": replay.response_json}
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    return {"success": True, "data": purge_test_product_data(db, product, reason=payload.reason, confirmation=payload.confirmation, idempotency_key=idempotency_key, admin=current_admin)}
+
+
+@router.get("/{product_id}/purge-test-data/preview")
+async def products_purge_test_data_preview(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    return {"success": True, "data": test_purge_preview(db, product)}
+
+
 @router.post("/{product_id}/health-check")
 async def products_health_check(
     product_id: UUID,
@@ -80,3 +134,110 @@ async def products_health_check(
         checked_at=product.last_checked_at,
     )
     return {"success": True, "data": payload.model_dump(mode="json")}
+
+
+@router.post("/{product_id}/sync")
+async def products_sync(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": await sync_product(db, product_id, current_admin)}
+
+
+@router.post("/{product_id}/sync/health")
+async def products_sync_health(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    product = await run_product_health_check(db, product, current_admin)
+    return {"success": True, "data": _serialize_product(product)}
+
+
+@router.post("/{product_id}/sync/organizations")
+async def products_sync_organizations(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": await reverify_product_mappings(db, product_id, current_admin)}
+
+
+@router.post("/{product_id}/organizations/discover")
+async def products_discover_organizations(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": await discover_product_organizations(db, product_id, current_admin)}
+
+
+@router.get("/{product_id}/organizations/discovered")
+async def products_discovered_organizations(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status_filter: OrganizationDiscoveryStatus | None = Query(default=None, alias="status"),
+    search: str | None = None,
+    product_organization_id: str | None = None,
+    product_active_status: bool | None = None,
+) -> dict:
+    items, total = list_discoveries(
+        db,
+        product_id,
+        DiscoveryFilters(
+            status=status_filter,
+            search=search,
+            product_organization_id=product_organization_id,
+            product_active_status=product_active_status,
+        ),
+        limit=limit,
+        offset=offset,
+    )
+    payload = DiscoveryListResponse(
+        items=[ProductOrganizationDiscoveryRead.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+    return {"success": True, "data": payload.model_dump(mode="json")}
+
+
+@router.post("/{product_id}/organizations/import")
+async def products_import_organizations(
+    product_id: UUID,
+    payload: ImportOrganizationsRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {
+        "success": True,
+        "data": await import_discoveries(
+            db,
+            product_id,
+            current_admin,
+            discovery_ids=payload.discovery_ids,
+            product_organization_ids=payload.product_organization_ids,
+        ),
+    }
+
+
+@router.post("/{product_id}/organizations/import-all")
+async def products_import_all_organizations(
+    product_id: UUID,
+    payload: ImportAllOrganizationsRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    if payload.confirm != product.product_name and payload.confirm != str(product.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Confirmation must match product name or deployment ID")
+    return {"success": True, "data": await import_discoveries(db, product_id, current_admin, limit=payload.limit)}

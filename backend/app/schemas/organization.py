@@ -17,22 +17,53 @@ from app.core.enums import (
 
 
 class OrganizationCreate(BaseModel):
-    central_organization_id: str = Field(min_length=1, max_length=120)
     name: str = Field(min_length=1, max_length=255)
     product_deployment_id: UUID
     currency: str = Field(min_length=3, max_length=3)
     lifecycle_status: OrganizationLifecycleStatus = OrganizationLifecycleStatus.trial
     billing_mode: BillingMode
     billing_calculation_status: BillingCalculationStatus = BillingCalculationStatus.usage_tracking_only
-    credit_status: CreditStatus = CreditStatus.not_applicable
-    service_status: ServiceStatus = ServiceStatus.pending_sync
-    sync_status: SyncStatus = SyncStatus.pending
     last_active_at: datetime | None = None
 
     @field_validator("currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return value.upper()
+
+
+class ProductOrganizationLookupRequest(BaseModel):
+    product_deployment_id: UUID
+    product_organization_id: str = Field(min_length=1, max_length=150)
+
+
+class ProductOrganizationLookupRead(BaseModel):
+    product_deployment_id: UUID
+    product_organization_id: str
+    organization_name: str | None = None
+    lifecycle_status: OrganizationLifecycleStatus | None = None
+    billing_mode: BillingMode | None = None
+    billing_calculation_status: BillingCalculationStatus | None = None
+    currency: str | None = None
+    credit_status: CreditStatus | None = None
+    service_status: ServiceStatus | None = None
+    credit_balance: Decimal | None = None
+    outstanding_dues: Decimal | None = None
+    last_active_at: datetime | None = None
+    safe_metadata: dict | None = None
+
+
+class OrganizationLinkFromProductRequest(ProductOrganizationLookupRequest):
+    reason: str | None = Field(default=None, max_length=1000)
+    manual_name: str | None = Field(default=None, min_length=1, max_length=255)
+    manual_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    manual_lifecycle_status: OrganizationLifecycleStatus | None = None
+    manual_billing_mode: BillingMode | None = None
+    manual_billing_calculation_status: BillingCalculationStatus | None = None
+
+    @field_validator("manual_currency")
+    @classmethod
+    def normalize_manual_currency(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
 
 
 class OrganizationUpdate(BaseModel):
@@ -42,9 +73,6 @@ class OrganizationUpdate(BaseModel):
     lifecycle_status: OrganizationLifecycleStatus | None = None
     billing_mode: BillingMode | None = None
     billing_calculation_status: BillingCalculationStatus | None = None
-    credit_status: CreditStatus | None = None
-    service_status: ServiceStatus | None = None
-    sync_status: SyncStatus | None = None
     last_active_at: datetime | None = None
 
     @field_validator("currency")
