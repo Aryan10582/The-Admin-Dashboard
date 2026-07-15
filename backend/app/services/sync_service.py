@@ -11,6 +11,7 @@ from app.core.enums import AuditResultStatus, FailureStatus, IdempotencyRecordSt
 from app.core.product_secrets import ProductSecretEncryptionError, decrypt_product_secret
 from app.integrations.product_admin_client import ProductDeliveryResult
 from app.models.admin import Admin
+from app.models.ai import AIUsageSyncRun, AIUsageSyncState
 from app.models.audit import AuditLog
 from app.models.failure_log import FailureLog
 from app.models.idempotency import IdempotencyRecord
@@ -660,6 +661,13 @@ def sync_status(db: Session) -> dict:
             .order_by(PendingProductChange.created_at.asc())
             .limit(1)
         )
+        usage_state = db.get(AIUsageSyncState, product.id)
+        latest_usage_run = db.scalar(
+            select(AIUsageSyncRun)
+            .where(AIUsageSyncRun.product_deployment_id == product.id)
+            .order_by(AIUsageSyncRun.started_at.desc())
+            .limit(1)
+        )
         items.append(
             {
                 "product_id": str(product.id),
@@ -673,6 +681,31 @@ def sync_status(db: Session) -> dict:
                 "counts": counts,
                 "latest_failure": _safe_error(latest_failure.error_message) if latest_failure else None,
                 "has_ordering_blocker": blocker is not None,
+                "token_usage": {
+                    "configured": product.token_usage_configured,
+                    "path": product.token_usage_list_path,
+                    "last_attempt": product.last_usage_sync_attempt_at.isoformat() if product.last_usage_sync_attempt_at else None,
+                    "last_success": product.last_successful_usage_sync_at.isoformat() if product.last_successful_usage_sync_at else None,
+                    "last_committed_cursor": usage_state.last_committed_cursor if usage_state else None,
+                    "safe_last_error": usage_state.safe_last_error if usage_state else product.last_usage_sync_error,
+                    "latest_run": {
+                        "id": str(latest_usage_run.id),
+                        "status": latest_usage_run.status.value,
+                        "starting_cursor": latest_usage_run.starting_cursor,
+                        "ending_cursor": latest_usage_run.ending_cursor,
+                        "pages_fetched": latest_usage_run.pages_fetched,
+                        "records_received": latest_usage_run.records_received,
+                        "imported_count": latest_usage_run.imported_count,
+                        "unchanged_count": latest_usage_run.unchanged_count,
+                        "unresolved_pricing_count": latest_usage_run.unresolved_pricing_count,
+                        "unresolved_mapping_count": latest_usage_run.unresolved_mapping_count,
+                        "conflict_count": latest_usage_run.conflict_count,
+                        "invalid_count": latest_usage_run.invalid_count,
+                        "safe_error": latest_usage_run.safe_error,
+                    }
+                    if latest_usage_run
+                    else None,
+                },
             }
         )
     return {"items": items}

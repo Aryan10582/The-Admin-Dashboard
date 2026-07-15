@@ -1,14 +1,17 @@
 import { apiRequest } from "@/lib/api";
 import type { ApiResponse, DiscoveryListPayload, DiscoverySummary, ImportOrganizationsResult, ProductDeployment, ProductHealthCheckResult, ProductPayload } from "@/lib/types";
 
-function cleanPayload(payload: ProductPayload): ProductPayload {
-  return {
-    ...payload,
-    health_check_url: payload.health_check_url || null,
-    organization_list_path: payload.organization_list_path || null,
-    organization_detail_path_template: payload.organization_detail_path_template || null,
-    admin_api_secret: payload.admin_api_secret || undefined
-  };
+function cleanPayload(payload: Partial<ProductPayload>): Partial<ProductPayload> {
+  const cleaned: Partial<ProductPayload> = { ...payload };
+  for (const key of ["health_check_url", "organization_list_path", "organization_detail_path_template", "token_usage_list_path"] as const) {
+    if (key in cleaned) {
+      cleaned[key] = cleaned[key] || null;
+    }
+  }
+  if ("admin_api_secret" in cleaned) {
+    cleaned.admin_api_secret = cleaned.admin_api_secret || undefined;
+  }
+  return cleaned;
 }
 
 export function listProducts() {
@@ -29,7 +32,7 @@ export function getProduct(productId: string) {
 export function updateProduct(productId: string, payload: Partial<ProductPayload>) {
   return apiRequest<ApiResponse<ProductDeployment>>(`/products/${productId}`, {
     method: "PATCH",
-    json: cleanPayload(payload as ProductPayload)
+    json: cleanPayload(payload)
   });
 }
 

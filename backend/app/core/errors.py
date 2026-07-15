@@ -21,6 +21,14 @@ def error_response(message: str, code: str, status_code: int, request_id: str | 
     )
 
 
+def _safe_validation_errors(errors: list[dict]) -> list[dict]:
+    safe_errors = []
+    for error in errors:
+        safe_error = {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+        safe_errors.append(safe_error)
+    return safe_errors
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -35,7 +43,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "validation_error",
                     "message": "Request validation failed",
-                    "details": jsonable_encoder(exc.errors()),
+                    "details": jsonable_encoder(_safe_validation_errors(exc.errors())),
                     "request_id": getattr(request.state, "request_id", None),
                 },
             },

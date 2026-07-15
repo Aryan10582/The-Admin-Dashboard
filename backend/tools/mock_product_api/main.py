@@ -7,7 +7,7 @@ are unavailable.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -38,6 +38,19 @@ SCENARIOS = {
     "status_lookup_unknown",
     "empty_organizations",
     "malformed_organizations",
+    "usage_empty",
+    "usage_multiple_pages",
+    "usage_conflicting_replay",
+    "usage_unknown_model",
+    "usage_unmapped_organization",
+    "usage_malformed_timestamp",
+    "usage_naive_timestamp",
+    "usage_negative_tokens",
+    "usage_missing_id",
+    "usage_missing_organization",
+    "usage_specialized_dimensions",
+    "usage_non_final",
+    "usage_malformed_response",
 }
 
 
@@ -89,6 +102,8 @@ class MockState:
             "product_active_status": False,
         },
     ]
+
+    usage_conflict_mode = False
 
 
 state = MockState()
@@ -170,7 +185,113 @@ async def get_state() -> dict:
 async def reset_state() -> dict:
     state.scenario = "confirmed_success"
     state.deliveries.clear()
+    state.usage_conflict_mode = False
     return {"success": True}
+
+
+def _base_usage() -> list[dict]:
+    now = datetime.now(timezone.utc)
+    older = now.replace(microsecond=0) - timedelta(days=2)
+    current = now.replace(microsecond=0) - timedelta(hours=1)
+    return [
+        {
+            "product_usage_id": "usage-old-001",
+            "product_organization_id": "org_101",
+            "provider": "mock-ai",
+            "product_model_id": "mock-model",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "usage_at": older.isoformat(),
+            "is_final": True,
+            "finalized_at": (older + timedelta(minutes=1)).isoformat(),
+            "campaign_id": "campaign-demo",
+            "request_id": "request-old",
+        },
+        {
+            "product_usage_id": "usage-current-001",
+            "product_organization_id": "org_101",
+            "provider": "mock-ai",
+            "product_model_id": "mock-model",
+            "input_tokens": 2000,
+            "output_tokens": 1000,
+            "usage_at": current.isoformat(),
+            "is_final": True,
+            "finalized_at": (current + timedelta(minutes=1)).isoformat(),
+            "conversation_id": "conversation-demo",
+            "request_id": "request-current",
+        },
+        {
+            "product_usage_id": "usage-unmapped-org",
+            "product_organization_id": "org_unmapped",
+            "provider": "mock-ai",
+            "product_model_id": "mock-model",
+            "input_tokens": 300,
+            "output_tokens": 200,
+            "usage_at": current.isoformat(),
+            "is_final": True,
+            "finalized_at": (current + timedelta(minutes=1)).isoformat(),
+        },
+        {
+            "product_usage_id": "usage-unknown-model",
+            "product_organization_id": "org_101",
+            "provider": "mock-ai",
+            "product_model_id": "mock-unknown",
+            "input_tokens": 100,
+            "output_tokens": 100,
+            "usage_at": current.isoformat(),
+            "is_final": True,
+            "finalized_at": (current + timedelta(minutes=1)).isoformat(),
+        },
+    ]
+
+
+@app.get("/{api_version}/admin/token-usage")
+async def token_usage_list(api_version: str, request: Request, limit: int = 100, cursor: str | None = None):
+    scenario = _scenario_from_request(request)
+    if scenario == "temporary_5xx":
+        return JSONResponse({"success": False, "error_code": "temporary_5xx"}, status_code=503)
+    if scenario == "timeout":
+        await asyncio.sleep(30)
+    if scenario == "usage_malformed_response":
+        return {"items": {"not": "a-list"}}
+    if scenario == "usage_empty":
+        return {"items": [], "has_more": False, "product_request_id": _request_id()}
+    items = _base_usage()
+    if scenario == "usage_conflicting_replay" or state.usage_conflict_mode:
+        state.usage_conflict_mode = True
+        items[0] = {**items[0], "input_tokens": 9999}
+    elif scenario == "usage_unknown_model":
+        items = [items[3]]
+    elif scenario == "usage_unmapped_organization":
+        items = [items[2]]
+    elif scenario == "usage_malformed_timestamp":
+        items = [{**items[0], "usage_at": "not-a-date", "product_usage_id": "usage-bad-time"}]
+    elif scenario == "usage_naive_timestamp":
+        current = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+        items = [{**items[0], "usage_at": current.replace(tzinfo=None).isoformat(), "product_usage_id": "usage-naive-time"}]
+    elif scenario == "usage_negative_tokens":
+        items = [{**items[0], "input_tokens": -1, "product_usage_id": "usage-negative"}]
+    elif scenario == "usage_missing_id":
+        items = [{**items[0], "product_usage_id": ""}]
+    elif scenario == "usage_missing_organization":
+        items = [{**items[0], "product_organization_id": "", "product_usage_id": "usage-missing-org"}]
+    elif scenario == "usage_specialized_dimensions":
+        items = [{**items[0], "product_usage_id": "usage-specialized", "unsupported_dimensions": {"cached_input_tokens": 100}}]
+    elif scenario == "usage_non_final":
+        items = [{**items[0], "product_usage_id": "usage-non-final", "is_final": False, "usage_revision": "rev-1", "finalized_at": None}]
+    if scenario != "usage_multiple_pages":
+        limit = max(limit, len(items))
+    start = int(cursor or "0")
+    page = items[start : start + limit]
+    next_offset = start + len(page)
+    return {
+        "items": page,
+        "next_cursor": str(next_offset) if next_offset < len(items) else None,
+        "has_more": next_offset < len(items),
+        "product_request_id": _request_id(),
+        "contract": "finalized_only" if scenario != "usage_non_final" else "revision_aware",
+        "product_api_version": api_version,
+    }
 
 
 @app.get("/health")

@@ -10,6 +10,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { StatusBadge } from "@/components/status/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { listAiUsage, summarizeAiUsage } from "@/lib/aiUsage";
 import { addCredits, deductCredits, getOrganizationBilling, getOrganizationLedger, recordManualPayment, type FinancialActionPayload } from "@/lib/billing";
 import {
   getOrganization,
@@ -30,7 +31,7 @@ import { assignOrganizationPlan, getOrganizationPlanAssignment, listOrganization
 import { syncOrganization } from "@/lib/sync";
 import type { OrganizationMappingPayload, OrganizationPayload } from "@/lib/types";
 
-const placeholders = ["AI Usage", "Revenue", "Audit History", "Impersonation"];
+const placeholders = ["Revenue", "Audit History", "Impersonation"];
 type FinancialFormValues = FinancialActionPayload & { idempotency_key: string };
 type ServiceFormValues = ServiceActionPayload & { idempotency_key: string };
 type PlanFormValues = { billing_plan_version_id: string; reason: string; idempotency_key: string };
@@ -63,6 +64,8 @@ export default function OrganizationDetailPage() {
   const serviceQuery = useQuery({ queryKey: ["organizations", organizationId, "service-enforcement"], queryFn: () => getServiceEnforcement(organizationId) });
   const planAssignmentQuery = useQuery({ queryKey: ["organizations", organizationId, "plan-assignment"], queryFn: () => getOrganizationPlanAssignment(organizationId) });
   const planHistoryQuery = useQuery({ queryKey: ["organizations", organizationId, "plan-assignment-history"], queryFn: () => listOrganizationPlanHistory(organizationId) });
+  const aiUsageSummaryQuery = useQuery({ queryKey: ["organizations", organizationId, "ai-usage-summary"], queryFn: () => summarizeAiUsage({ organization_id: organizationId }) });
+  const aiUsageQuery = useQuery({ queryKey: ["organizations", organizationId, "ai-usage"], queryFn: () => listAiUsage({ organization_id: organizationId, limit: 5 }) });
   const organizationForm = useForm<OrganizationPayload>();
   const mappingForm = useForm<OrganizationMappingPayload>();
   const addCreditsForm = useForm<FinancialFormValues>({ defaultValues: { amount: "", reason: "", idempotency_key: "" } });
@@ -113,6 +116,8 @@ export default function OrganizationDetailPage() {
     await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "plan-assignment"] });
     await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "plan-assignment-history"] });
     await queryClient.invalidateQueries({ queryKey: ["plans"] });
+    await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "ai-usage"] });
+    await queryClient.invalidateQueries({ queryKey: ["organizations", organizationId, "ai-usage-summary"] });
   };
 
   const updateMutation = useMutation({ mutationFn: (values: OrganizationPayload) => updateOrganization(organizationId, values), onSuccess: refresh });
@@ -506,6 +511,41 @@ export default function OrganizationDetailPage() {
                     </table>
                   </div>
                 ) : <p className="mt-3 text-sm text-muted-foreground">No ledger entries yet.</p>}
+              </div>
+            </section>
+
+            <section className="rounded-md border border-border bg-white p-5">
+              <h2 className="text-base font-semibold">AI Usage</h2>
+              {aiUsageSummaryQuery.isLoading ? <p className="mt-3 text-sm text-muted-foreground">Loading AI usage...</p> : null}
+              {aiUsageSummaryQuery.isError ? <p className="mt-3 text-sm text-red-700">{aiUsageSummaryQuery.error.message}</p> : null}
+              {aiUsageSummaryQuery.data ? (
+                <div className="mt-4 grid gap-4 md:grid-cols-4">
+                  <div><p className="text-xs uppercase text-muted-foreground">Records</p><p className="mt-1 text-sm font-medium">{aiUsageSummaryQuery.data.data.usage_record_count}</p></div>
+                  <div><p className="text-xs uppercase text-muted-foreground">Tokens</p><p className="mt-1 text-sm font-medium">{aiUsageSummaryQuery.data.data.total_tokens}</p><p className="text-xs text-muted-foreground">{aiUsageSummaryQuery.data.data.input_tokens} in / {aiUsageSummaryQuery.data.data.output_tokens} out</p></div>
+                  <div><p className="text-xs uppercase text-muted-foreground">Unresolved</p><p className="mt-1 text-sm font-medium">pricing {aiUsageSummaryQuery.data.data.unpriced_usage_count} / mapping {aiUsageSummaryQuery.data.data.unmapped_usage_count}</p></div>
+                  <div><p className="text-xs uppercase text-muted-foreground">Conflicts</p><p className="mt-1 text-sm font-medium">{aiUsageSummaryQuery.data.data.conflict_count}</p></div>
+                  <div className="md:col-span-2"><p className="text-xs uppercase text-muted-foreground">Finalized AI cost by currency</p><div className="mt-2 flex flex-wrap gap-2">{aiUsageSummaryQuery.data.data.finalized_costs_by_currency.length ? aiUsageSummaryQuery.data.data.finalized_costs_by_currency.map((item) => <StatusBadge key={item.currency} tone="success">{`${item.total_cost} ${item.currency}`}</StatusBadge>) : <span className="text-sm text-muted-foreground">No finalized AI cost</span>}</div></div>
+                  <div className="md:col-span-2"><p className="text-xs uppercase text-muted-foreground">Providers / models</p><p className="mt-1 text-sm">{aiUsageSummaryQuery.data.data.provider_model_breakdown.map((item) => `${item.provider}/${item.product_model_id ?? "-"}`).join(", ") || "-"}</p></div>
+                </div>
+              ) : null}
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted text-xs uppercase text-muted-foreground">
+                    <tr><th className="px-3 py-2">Usage</th><th className="px-3 py-2">Model</th><th className="px-3 py-2">Tokens</th><th className="px-3 py-2">Cost</th><th className="px-3 py-2">Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {(aiUsageQuery.data?.data.items ?? []).map((row) => (
+                      <tr key={row.id} className="border-t border-border">
+                        <td className="px-3 py-2">{row.usage_at ? new Date(row.usage_at).toLocaleString() : "-"}<div className="text-xs text-muted-foreground">{row.product_usage_id}</div></td>
+                        <td className="px-3 py-2">{row.provider} / {row.product_model_id ?? row.model_name}</td>
+                        <td className="px-3 py-2">{row.total_tokens}</td>
+                        <td className="px-3 py-2">{row.total_cost && row.cost_currency ? `${row.total_cost} ${row.cost_currency}` : "-"}</td>
+                        <td className="px-3 py-2">{row.pricing_resolution_status} / {row.mapping_resolution_status}</td>
+                      </tr>
+                    ))}
+                    {!(aiUsageQuery.data?.data.items ?? []).length ? <tr><td className="px-3 py-4 text-muted-foreground" colSpan={5}>No AI usage records for this organization.</td></tr> : null}
+                  </tbody>
+                </table>
               </div>
             </section>
 

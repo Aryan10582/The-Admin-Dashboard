@@ -41,6 +41,7 @@ from app.services.billing_service import (
     list_ledger,
     record_manual_payment,
 )
+from app.services.ai_usage_service import UsageFilters, list_usage
 from app.services.organization_service import (
     OrganizationFilters,
     create_organization,
@@ -170,6 +171,17 @@ async def organizations_billing(
     current_admin: Admin = Depends(get_current_admin),
 ) -> dict:
     return {"success": True, "data": get_billing_summary(db, organization_id)}
+
+
+@router.get("/{organization_id}/ai-usage")
+async def organizations_ai_usage(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return {"success": True, "data": list_usage(db, UsageFilters(organization_id=organization_id), limit=limit, offset=offset).model_dump(mode="json")}
 
 
 @router.get("/{organization_id}/plan-assignment")

@@ -13,6 +13,8 @@ os.environ["ADMIN_EMAIL"] = "admin@example.com"
 os.environ["ADMIN_PASSWORD"] = "correct-password"
 os.environ["SESSION_SECRET"] = "test-session-secret"
 os.environ["PRODUCT_SECRET_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+os.environ["AI_PRICING_MOCK_ADAPTER_ENABLED"] = "true"
+os.environ["ENVIRONMENT"] = "development"
 
 from app.api.deps import get_db
 from app.main import create_app, seed_admin

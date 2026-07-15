@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.core.enums import AuditResultStatus, FailureStatus, IdempotencyRecordStatus, ProductHealthStatus
+from app.core.enums import AiUsageConflictStatus, AiUsageMappingResolutionStatus, AiUsagePricingResolutionStatus, AuditResultStatus, FailureStatus, IdempotencyRecordStatus, ProductHealthStatus
 from app.core.product_secrets import decrypt_product_secret, encrypt_product_secret
 from app.integrations.product_admin_client import ProductHealthResult
 from app.models.admin import Admin
 from app.models.audit import AuditLog
+from app.models.ai import AIUsageSyncRun, AIUsageSyncState, AiUsageRecord, ProductAIModelPricingMapping
 from app.models.billing import BillingLedgerEntry, BillingPlan, BillingPlanVersion, ManualPayment, OrganizationPlanAssignment
 from app.models.discovery import ProductOrganizationDiscovery
 from app.models.failure_log import FailureLog
@@ -41,6 +42,8 @@ def _safe_product_snapshot(product: ProductDeployment) -> dict:
         "admin_api_version": product.admin_api_version,
         "organization_list_path": product.organization_list_path,
         "organization_detail_path_template_configured": bool(product.organization_detail_path_template),
+        "token_usage_list_path": product.token_usage_list_path,
+        "token_usage_configured": product.token_usage_configured,
         "is_active": product.is_active,
         "is_under_maintenance": product.is_under_maintenance,
         "health_status": product.health_status.value,
@@ -124,6 +127,20 @@ def product_dependency_summary(db: Session, product_id: UUID) -> dict:
         "plan_assignments": db.scalar(select(func.count()).select_from(OrganizationPlanAssignment).where(OrganizationPlanAssignment.organization_id.in_(org_ids))) if org_ids else 0,
         "pending_changes": db.scalar(select(func.count()).select_from(PendingProductChange).where(PendingProductChange.product_deployment_id == product_id)) or 0,
         "failure_logs": db.scalar(select(func.count()).select_from(FailureLog).where(FailureLog.product_deployment_id == product_id)) or 0,
+        "ai_usage_records": db.scalar(select(func.count()).select_from(AiUsageRecord).where(AiUsageRecord.product_deployment_id == product_id)) or 0,
+        "ai_usage_unresolved": db.scalar(
+            select(func.count()).select_from(AiUsageRecord).where(
+                AiUsageRecord.product_deployment_id == product_id,
+                (AiUsageRecord.pricing_resolution_status != AiUsagePricingResolutionStatus.resolved) | (AiUsageRecord.mapping_resolution_status != AiUsageMappingResolutionStatus.resolved),
+            )
+        )
+        or 0,
+        "ai_usage_finalized": db.scalar(select(func.count()).select_from(AiUsageRecord).where(AiUsageRecord.product_deployment_id == product_id, AiUsageRecord.total_cost.is_not(None))) or 0,
+        "ai_usage_conflicts": db.scalar(select(func.count()).select_from(AiUsageRecord).where(AiUsageRecord.product_deployment_id == product_id, AiUsageRecord.conflict_status == AiUsageConflictStatus.conflict)) or 0,
+        "ai_usage_unreviewed_conflicts": db.scalar(select(func.count()).select_from(AiUsageRecord).where(AiUsageRecord.product_deployment_id == product_id, AiUsageRecord.conflict_status == AiUsageConflictStatus.conflict, AiUsageRecord.conflict_reviewed_at.is_(None))) or 0,
+        "ai_model_pricing_mappings": db.scalar(select(func.count()).select_from(ProductAIModelPricingMapping).where(ProductAIModelPricingMapping.product_deployment_id == product_id)) or 0,
+        "ai_usage_sync_state": db.scalar(select(func.count()).select_from(AIUsageSyncState).where(AIUsageSyncState.product_deployment_id == product_id)) or 0,
+        "ai_usage_sync_runs": db.scalar(select(func.count()).select_from(AIUsageSyncRun).where(AIUsageSyncRun.product_deployment_id == product_id)) or 0,
         "audit_logs": db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.product_deployment_id == product_id)) or 0,
         "idempotency_records": db.scalar(select(func.count()).select_from(IdempotencyRecord).where(IdempotencyRecord.organization_id.in_(org_ids))) if org_ids else 0,
         "service_rules": db.scalar(select(func.count()).select_from(ServiceEnforcementRule).where(ServiceEnforcementRule.organization_id.in_(org_ids))) if org_ids else 0,
@@ -253,6 +270,10 @@ def purge_test_product_data(db: Session, product: ProductDeployment, *, reason: 
         (BillingLedgerEntry, BillingLedgerEntry.product_deployment_id == product.id),
         (ManualPayment, ManualPayment.product_deployment_id == product.id),
         (PendingProductChange, PendingProductChange.product_deployment_id == product.id),
+        (AiUsageRecord, AiUsageRecord.product_deployment_id == product.id),
+        (AIUsageSyncRun, AIUsageSyncRun.product_deployment_id == product.id),
+        (AIUsageSyncState, AIUsageSyncState.product_deployment_id == product.id),
+        (ProductAIModelPricingMapping, ProductAIModelPricingMapping.product_deployment_id == product.id),
         (ProductOrganizationDiscovery, ProductOrganizationDiscovery.product_deployment_id == product.id),
         (OrganizationPlanAssignment, OrganizationPlanAssignment.organization_id.in_(org_ids) if org_ids else None),
         (OrganizationMapping, OrganizationMapping.product_deployment_id == product.id),

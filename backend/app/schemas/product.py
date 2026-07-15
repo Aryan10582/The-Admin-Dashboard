@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.enums import CompatibilityStatus, Environment, ProductHealthStatus, SyncStatus
+from app.core.url_security import validate_product_admin_url
 
 
 def normalize_admin_url(value: str | None) -> str | None:
@@ -23,6 +24,7 @@ def normalize_admin_url(value: str | None) -> str | None:
         raise ValueError("URL cannot contain embedded credentials")
     if not parsed.netloc:
         raise ValueError("URL must include a host")
+    validate_product_admin_url(stripped)
 
     path = parsed.path.rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
@@ -34,13 +36,18 @@ def validate_relative_product_path(value: str | None, *, require_placeholder: bo
     stripped = value.strip()
     if not stripped:
         return None
+    if "\x00" in stripped:
+        raise ValueError("Path cannot contain null characters")
     parsed = urlsplit(stripped)
     if parsed.scheme or parsed.netloc or parsed.username or parsed.password:
         raise ValueError("Path must be relative to the product API base URL")
-    if not stripped.startswith("/"):
-        raise ValueError("Path must start with /")
-    if ".." in parsed.path.split("/"):
+    if not stripped.startswith("/") or stripped.startswith("//"):
+        raise ValueError("Path must start with exactly one /")
+    decoded_path = unquote(parsed.path)
+    if ".." in decoded_path.split("/"):
         raise ValueError("Path cannot contain path traversal")
+    if parsed.query:
+        raise ValueError("Path cannot contain a query string")
     if parsed.fragment:
         raise ValueError("Path cannot contain a fragment")
     if require_placeholder and "{organization_id}" not in stripped:
@@ -58,6 +65,7 @@ class ProductDeploymentBase(BaseModel):
     admin_api_version: str = Field(default="v1", min_length=1, max_length=50)
     organization_list_path: str | None = None
     organization_detail_path_template: str | None = None
+    token_usage_list_path: str | None = None
     is_active: bool = True
     is_under_maintenance: bool = False
 
@@ -75,6 +83,11 @@ class ProductDeploymentBase(BaseModel):
     @classmethod
     def validate_org_detail_template(cls, value: str | None) -> str | None:
         return validate_relative_product_path(value, require_placeholder=True)
+
+    @field_validator("token_usage_list_path")
+    @classmethod
+    def validate_token_usage_list_path(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value)
 
     @field_validator("currency")
     @classmethod
@@ -105,6 +118,7 @@ class ProductDeploymentUpdate(BaseModel):
     admin_api_version: str | None = Field(default=None, min_length=1, max_length=50)
     organization_list_path: str | None = None
     organization_detail_path_template: str | None = None
+    token_usage_list_path: str | None = None
     is_active: bool | None = None
     is_under_maintenance: bool | None = None
     admin_api_secret: str | None = Field(default=None, max_length=4096)
@@ -123,6 +137,11 @@ class ProductDeploymentUpdate(BaseModel):
     @classmethod
     def validate_org_detail_template(cls, value: str | None) -> str | None:
         return validate_relative_product_path(value, require_placeholder=True)
+
+    @field_validator("token_usage_list_path")
+    @classmethod
+    def validate_token_usage_list_path(cls, value: str | None) -> str | None:
+        return validate_relative_product_path(value)
 
     @field_validator("currency")
     @classmethod
@@ -148,6 +167,7 @@ class ProductDeploymentRead(BaseModel):
     admin_api_version: str
     organization_list_path: str | None
     organization_detail_path_template: str | None
+    token_usage_list_path: str | None
     supported_endpoints: dict[str, Any] | None
     compatibility_status: CompatibilityStatus
     is_active: bool
@@ -163,7 +183,12 @@ class ProductDeploymentRead(BaseModel):
     last_organization_discovery_attempt_at: datetime | None
     last_successful_organization_discovery_at: datetime | None
     last_organization_discovery_error: str | None
+    last_usage_sync_attempt_at: datetime | None
+    last_successful_usage_sync_at: datetime | None
+    last_usage_sync_error: str | None
     secret_configured: bool
+    token_usage_configured: bool
+    ai_usage_sync_configured: bool
     created_at: datetime
     updated_at: datetime
 

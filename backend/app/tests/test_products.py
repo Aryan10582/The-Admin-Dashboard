@@ -66,35 +66,76 @@ def test_product_endpoints_require_authentication(client: TestClient) -> None:
 
 def test_product_create_list_detail_and_update_work(client: TestClient, db_session: Session) -> None:
     login(client)
-    created = create_product(client)
+    created = create_product(client, token_usage_list_path="/api/v1/admin/ai-usage")
 
     assert created["product_name"] == "Core CRM"
     assert created["currency"] == "USD"
     assert created["api_base_url"] == "https://product.example.com"
     assert created["health_check_url"] == "https://product.example.com/health"
+    assert created["token_usage_list_path"] == "/api/v1/admin/ai-usage"
+    assert created["token_usage_configured"] is True
+    assert created["ai_usage_sync_configured"] is True
     assert created["secret_configured"] is True
     assert "admin_api_secret" not in created
 
     list_response = client.get("/api/v1/products")
     assert list_response.status_code == 200
     assert list_response.json()["data"][0]["id"] == created["id"]
+    assert list_response.json()["data"][0]["token_usage_list_path"] == "/api/v1/admin/ai-usage"
+    assert list_response.json()["data"][0]["ai_usage_sync_configured"] is True
 
     detail_response = client.get(f"/api/v1/products/{created['id']}")
     assert detail_response.status_code == 200
     assert detail_response.json()["data"]["id"] == created["id"]
+    assert detail_response.json()["data"]["token_usage_list_path"] == "/api/v1/admin/ai-usage"
 
     update_response = client.patch(
         f"/api/v1/products/{created['id']}",
-        json={"product_name": "Core CRM Updated", "is_active": False},
+        json={"product_name": "Core CRM Updated", "is_active": False, "token_usage_list_path": "/internal/admin/token-usage"},
     )
     assert update_response.status_code == 200
     updated = update_response.json()["data"]
     assert updated["product_name"] == "Core CRM Updated"
     assert updated["is_active"] is False
+    assert updated["token_usage_list_path"] == "/internal/admin/token-usage"
+
+    clear_response = client.patch(f"/api/v1/products/{created['id']}", json={"token_usage_list_path": None})
+    assert clear_response.status_code == 200
+    assert clear_response.json()["data"]["token_usage_list_path"] is None
+    assert clear_response.json()["data"]["ai_usage_sync_configured"] is False
 
     audit_actions = db_session.scalars(select(AuditLog.action).order_by(AuditLog.created_at)).all()
     assert "product.created" in audit_actions
     assert "product.updated" in audit_actions
+
+
+def test_product_create_without_token_usage_path_remains_valid(client: TestClient) -> None:
+    login(client)
+    created = create_product(client)
+    assert created["token_usage_list_path"] is None
+    assert created["token_usage_configured"] is False
+    assert created["ai_usage_sync_configured"] is False
+
+
+def test_unsafe_token_usage_paths_are_rejected(client: TestClient) -> None:
+    login(client)
+    unsafe_paths = [
+        "https://other-domain.com/usage",
+        "http://other-domain.com/usage",
+        "//other-domain.com/usage",
+        "../usage",
+        "/api/../private",
+        "/api/%2e%2e/private",
+        "user:password@example.com/usage",
+        "javascript:alert(1)",
+        "data:text/plain,test",
+        "/api/v1/admin/ai-usage?cursor=stored",
+        "/api/v1/admin/ai-usage#fragment",
+        "/api/v1/admin/ai-usage\x00",
+    ]
+    for path in unsafe_paths:
+        response = client.post("/api/v1/products", json=product_payload(token_usage_list_path=path))
+        assert response.status_code == 422, path
 
 
 def test_secrets_are_encrypted_never_returned_or_logged_and_patch_preserves_secret(

@@ -1,7 +1,11 @@
 packages:
   - .
 
+overrides:
+  postcss: 8.5.19
+
 allowBuilds:
+  sharp: false
   unrs-resolver: true
 
 onlyBuiltDependencies:

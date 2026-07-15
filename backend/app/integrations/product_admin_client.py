@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from datetime import datetime, timezone
 from time import perf_counter
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
+
+from app.core.config import settings
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,36 @@ class ProductOrganizationListResult:
 
 
 @dataclass(frozen=True)
+class ProductTokenUsageItem:
+    product_usage_id: str
+    product_organization_id: str
+    provider: str
+    product_model_id: str
+    input_tokens: int
+    output_tokens: int
+    usage_at: str
+    is_final: bool = True
+    usage_revision: str | None = None
+    finalized_at: str | None = None
+    campaign_id: str | None = None
+    conversation_id: str | None = None
+    lead_id: str | None = None
+    request_id: str | None = None
+    unsupported_dimensions: dict | None = None
+
+
+@dataclass(frozen=True)
+class ProductTokenUsageListResult:
+    is_success: bool
+    usage: list[ProductTokenUsageItem]
+    next_cursor: str | None = None
+    has_more: bool = False
+    product_request_id: str | None = None
+    error_category: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
 class ProductDeliveryResult:
     success: bool
     product_organization_id: str | None = None
@@ -87,6 +120,7 @@ class ProductAdminClient:
         health_check_url: str | None = None,
         organization_list_path: str | None = None,
         organization_detail_path_template: str | None = None,
+        token_usage_list_path: str | None = None,
         timeout_seconds: float = 10,
     ) -> None:
         self.api_base_url = api_base_url.rstrip("/")
@@ -95,10 +129,36 @@ class ProductAdminClient:
         self.health_check_url = (health_check_url or f"{self.api_base_url}/health").rstrip("/")
         self.organization_list_path = organization_list_path or f"/{self.api_version}/admin/organizations"
         self.organization_detail_path_template = organization_detail_path_template or f"/{self.api_version}/admin/organizations/{{organization_id}}"
+        self.token_usage_list_path = token_usage_list_path
         self.timeout_seconds = timeout_seconds
 
+    def _response_too_large(self, response: httpx.Response) -> bool:
+        max_bytes = settings.product_api_response_size_limit_bytes
+        content_length = response.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+            return True
+        return len(response.content) > max_bytes
+
     def _url_for_path(self, path: str) -> str:
-        return urljoin(f"{self.api_base_url}/", path.lstrip("/"))
+        parsed_path = urlsplit(path)
+        decoded_path = unquote(parsed_path.path)
+        if "\x00" in path:
+            raise ValueError("Product path cannot contain null characters")
+        if parsed_path.scheme or parsed_path.netloc or parsed_path.username or parsed_path.password:
+            raise ValueError("Product path must be relative to the product API base URL")
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("Product path must start with exactly one /")
+        if ".." in decoded_path.split("/"):
+            raise ValueError("Product path cannot contain path traversal")
+        if parsed_path.query or parsed_path.fragment:
+            raise ValueError("Product path cannot contain a query string or fragment")
+
+        url = urljoin(f"{self.api_base_url}/", path.lstrip("/"))
+        base = urlsplit(self.api_base_url)
+        final = urlsplit(url)
+        if final.scheme != base.scheme or final.netloc != base.netloc:
+            raise ValueError("Product path must remain on the configured product host")
+        return url
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json, text/plain, */*"}
@@ -169,6 +229,8 @@ class ProductAdminClient:
 
         if not response.is_success:
             return ProductOrganizationListResult(False, [], error_category="http_error", error_message=f"Product organization list endpoint returned HTTP {response.status_code}")
+        if self._response_too_large(response):
+            return ProductOrganizationListResult(False, [], error_category="response_too_large", error_message="Product organization list response was too large")
         try:
             payload = response.json()
         except ValueError:
@@ -258,6 +320,12 @@ class ProductAdminClient:
                 error_category="http_error",
                 error_message=f"Product organization endpoint returned HTTP {response.status_code}",
             )
+        if self._response_too_large(response):
+            return ProductOrganizationLookupResult(
+                is_success=False,
+                error_category="response_too_large",
+                error_message="Product organization endpoint response was too large",
+            )
 
         try:
             payload = response.json()
@@ -330,6 +398,13 @@ class ProductAdminClient:
         except Exception:
             return ProductDeliveryResult(success=False, error_code="unexpected_client_failure", safe_error_message="Unexpected product client failure")
 
+        if self._response_too_large(response):
+            return ProductDeliveryResult(
+                success=False,
+                error_code="response_too_large",
+                safe_error_message="Product API response was too large",
+                http_status=response.status_code,
+            )
         try:
             data = response.json()
         except ValueError:
@@ -384,6 +459,8 @@ class ProductAdminClient:
         except Exception:
             return ProductPendingChangeStatusResult(success=False, error_code="unexpected_client_failure", safe_error_message="Unexpected product status client failure")
 
+        if self._response_too_large(response):
+            return ProductPendingChangeStatusResult(success=False, error_code="response_too_large", safe_error_message="Product status response was too large", http_status=response.status_code)
         try:
             data = response.json()
         except ValueError:
@@ -414,8 +491,77 @@ class ProductAdminClient:
             plan_version_number=int(data["plan_version"]) if str(data.get("plan_version") or "").isdigit() else None,
         )
 
+    async def list_token_usage(self, *, cursor: str | None = None, limit: int = 100) -> ProductTokenUsageListResult:
+        if not self.token_usage_list_path:
+            return ProductTokenUsageListResult(False, [], error_category="not_configured", error_message="Product token usage endpoint is not configured")
+        url = self._url_for_path(self.token_usage_list_path)
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=False) as client:
+                response = await client.get(url, headers=self._headers(), params=params)
+        except httpx.TimeoutException:
+            return ProductTokenUsageListResult(False, [], error_category="timeout", error_message="Product token usage list timed out")
+        except httpx.ConnectError:
+            return ProductTokenUsageListResult(False, [], error_category="connection_error", error_message="Could not connect to product token usage endpoint")
+        except httpx.RequestError:
+            return ProductTokenUsageListResult(False, [], error_category="request_error", error_message="Product token usage endpoint could not be reached")
+
+        if not response.is_success:
+            return ProductTokenUsageListResult(False, [], error_category="http_error", error_message=f"Product token usage endpoint returned HTTP {response.status_code}")
+        if self._response_too_large(response):
+            return ProductTokenUsageListResult(False, [], error_category="response_too_large", error_message="Product token usage endpoint response was too large")
+        try:
+            payload = response.json()
+        except ValueError:
+            return ProductTokenUsageListResult(False, [], error_category="invalid_response", error_message="Product token usage endpoint returned invalid JSON")
+        if not isinstance(payload, dict):
+            return ProductTokenUsageListResult(False, [], error_category="invalid_response", error_message="Product token usage endpoint returned an unusable response")
+        raw_items = payload.get("usage") or payload.get("items") or payload.get("data") or []
+        if not isinstance(raw_items, list):
+            return ProductTokenUsageListResult(False, [], error_category="invalid_response", error_message="Product token usage items were not a list")
+
+        items: list[ProductTokenUsageItem] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                return ProductTokenUsageListResult(False, [], error_category="invalid_response", error_message="Product token usage contained an invalid item")
+            try:
+                input_tokens = int(raw.get("input_tokens"))
+                output_tokens = int(raw.get("output_tokens"))
+            except (TypeError, ValueError):
+                input_tokens = -1
+                output_tokens = -1
+            items.append(
+                ProductTokenUsageItem(
+                    product_usage_id=str(raw.get("product_usage_id") or ""),
+                    product_organization_id=str(raw.get("product_organization_id") or ""),
+                    provider=str(raw.get("provider") or ""),
+                    product_model_id=str(raw.get("product_model_id") or raw.get("model_id") or ""),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    usage_at=str(raw.get("usage_at") or ""),
+                    is_final=bool(raw.get("is_final", True)),
+                    usage_revision=str(raw.get("usage_revision") or "") or None,
+                    finalized_at=str(raw.get("finalized_at") or "") or None,
+                    campaign_id=str(raw.get("campaign_id") or "") or None,
+                    conversation_id=str(raw.get("conversation_id") or "") or None,
+                    lead_id=str(raw.get("lead_id") or "") or None,
+                    request_id=str(raw.get("request_id") or raw.get("product_request_id") or "") or None,
+                    unsupported_dimensions=raw.get("unsupported_dimensions") if isinstance(raw.get("unsupported_dimensions"), dict) else None,
+                )
+            )
+
+        return ProductTokenUsageListResult(
+            True,
+            items,
+            next_cursor=payload.get("next_cursor"),
+            has_more=bool(payload.get("has_more") or payload.get("next_cursor")),
+            product_request_id=payload.get("product_request_id") or payload.get("request_id"),
+        )
+
     async def get_token_usage(self, product_organization_id: str) -> dict:
-        raise NotImplementedError("AI usage integration is intentionally deferred.")
+        raise NotImplementedError("Per-organization token usage integration is intentionally deferred; use list_token_usage.")
 
     async def get_revenue(self) -> dict:
         raise NotImplementedError("Revenue integration is intentionally deferred.")

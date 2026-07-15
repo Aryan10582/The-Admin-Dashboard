@@ -35,6 +35,7 @@ export type ProductDeployment = {
   admin_api_version: string;
   organization_list_path: string | null;
   organization_detail_path_template: string | null;
+  token_usage_list_path: string | null;
   supported_endpoints: Record<string, unknown> | null;
   compatibility_status: string;
   is_active: boolean;
@@ -50,6 +51,11 @@ export type ProductDeployment = {
   last_organization_discovery_attempt_at: string | null;
   last_successful_organization_discovery_at: string | null;
   last_organization_discovery_error: string | null;
+  last_usage_sync_attempt_at: string | null;
+  last_successful_usage_sync_at: string | null;
+  last_usage_sync_error: string | null;
+  token_usage_configured: boolean;
+  ai_usage_sync_configured: boolean;
   secret_configured: boolean;
   created_at: string;
   updated_at: string;
@@ -65,6 +71,7 @@ export type ProductPayload = {
   admin_api_version: string;
   organization_list_path?: string | null;
   organization_detail_path_template?: string | null;
+  token_usage_list_path?: string | null;
   is_active: boolean;
   is_under_maintenance: boolean;
   admin_api_secret?: string | null;
@@ -339,6 +346,270 @@ export type PlanAssignmentResult = {
   idempotency_key: string;
 };
 
+export type AiPricingSourceType = "manual" | "provider_check" | "system_import";
+export type AiPricingCreatedBy = "admin" | "system";
+export type AiPricingEffectiveState = "current" | "future" | "expired";
+export type AiPriceCheckStatus =
+  | "running"
+  | "unchanged"
+  | "version_created"
+  | "requires_manual_review"
+  | "unsupported"
+  | "source_unavailable"
+  | "invalid_response"
+  | "failed"
+  | "approved"
+  | "rejected";
+export type AiPriceReviewDecision = "approved" | "rejected";
+
+export type AiPricingVersion = {
+  id: string;
+  pricing_catalog_id: string | null;
+  version_number: number;
+  input_token_price: string;
+  output_token_price: string;
+  pricing_unit_tokens: number;
+  currency_snapshot: string | null;
+  pricing_scope_snapshot: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  source_type: AiPricingSourceType;
+  source_reference: string | null;
+  created_by_type: AiPricingCreatedBy;
+  created_by_admin_id: string | null;
+  note: string | null;
+  created_at: string;
+  is_active: boolean;
+  effective_state: AiPricingEffectiveState;
+};
+
+export type AiPricingCatalog = {
+  id: string;
+  provider: string;
+  provider_model_id: string;
+  display_name: string;
+  pricing_scope_code: string;
+  currency: string;
+  description: string | null;
+  is_active: boolean;
+  latest_version: AiPricingVersion | null;
+  current_effective_version: AiPricingVersion | null;
+  version_count: number;
+  has_future_version: boolean;
+  last_check_status: AiPriceCheckStatus | null;
+  last_checked_at: string | null;
+  unresolved_review_count: number;
+  source_state: string;
+  safe_last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiPricingCatalogListPayload = {
+  items: AiPricingCatalog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AiPricingCatalogPayload = {
+  provider: string;
+  provider_model_id: string;
+  display_name: string;
+  pricing_scope_code: string;
+  currency: string;
+  description?: string | null;
+  is_active?: boolean;
+  reason: string;
+};
+
+export type AiPricingVersionPayload = {
+  input_token_price: string;
+  output_token_price: string;
+  pricing_unit_tokens: number;
+  effective_from: string;
+  effective_to?: string | null;
+  source_reference?: string | null;
+  reason: string;
+};
+
+export type AiPriceCheckRun = {
+  id: string;
+  pricing_catalog_id: string | null;
+  provider: string;
+  pricing_scope_code: string;
+  started_at: string;
+  completed_at: string | null;
+  requested_by_admin_id: string | null;
+  reason: string | null;
+  request_idempotency_key: string | null;
+  source_reference: string | null;
+  source_fingerprint: string | null;
+  source_effective_at: string | null;
+  status: AiPriceCheckStatus;
+  candidate_input_price: string | null;
+  candidate_output_price: string | null;
+  candidate_currency: string | null;
+  candidate_pricing_unit_tokens: number | null;
+  candidate_provider_model_id: string | null;
+  safe_error: string | null;
+  reviewed_by_admin_id: string | null;
+  reviewed_at: string | null;
+  review_decision: AiPriceReviewDecision | null;
+  review_note: string | null;
+  created_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiPriceCheckRunListPayload = {
+  items: AiPriceCheckRun[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AiUsageFinalizationStatus = "finalized" | "non_final" | "invalid";
+export type AiUsagePricingResolutionStatus = "resolved" | "requires_pricing_resolution" | "unsupported_dimensions";
+export type AiUsageMappingResolutionStatus = "resolved" | "requires_mapping_resolution";
+export type AiUsageConflictStatus = "none" | "conflict";
+export type AiUsageSyncRunStatus = "success" | "partial_success" | "failed";
+
+export type AiUsageRecord = {
+  id: string;
+  product_deployment_id: string;
+  product_usage_id: string;
+  product_organization_id: string | null;
+  organization_id: string | null;
+  provider: string;
+  model_name: string;
+  product_model_id: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  usage_at: string | null;
+  usage_revision: string | null;
+  is_final: boolean;
+  finalized_at: string | null;
+  pricing_mapping_id: string | null;
+  pricing_catalog_id: string | null;
+  pricing_version_id: string | null;
+  pricing_unit_tokens: number | null;
+  input_token_price: string | null;
+  output_token_price: string | null;
+  cost_currency: string | null;
+  input_cost: string | null;
+  output_cost: string | null;
+  total_cost: string | null;
+  calculated_at: string | null;
+  finalization_status: AiUsageFinalizationStatus;
+  pricing_resolution_status: AiUsagePricingResolutionStatus;
+  mapping_resolution_status: AiUsageMappingResolutionStatus;
+  conflict_status: AiUsageConflictStatus;
+  conflict_reviewed_by_admin_id: string | null;
+  conflict_reviewed_at: string | null;
+  conflict_review_note: string | null;
+  invalid_reason: string | null;
+  campaign_reference: string | null;
+  conversation_reference: string | null;
+  lead_reference: string | null;
+  request_reference: string | null;
+};
+
+export type AiUsageListPayload = {
+  items: AiUsageRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AiUsageResolutionItemResult = {
+  usage_id: string;
+  product_usage_id: string;
+  outcome: string;
+  message: string | null;
+  usage: AiUsageRecord | null;
+};
+
+export type AiUsageBatchResolutionResponse = {
+  items: AiUsageResolutionItemResult[];
+  processed: number;
+  resolved: number;
+};
+
+export type AiUsageConflictDetail = {
+  usage: AiUsageRecord;
+  original: Record<string, unknown>;
+  candidate: Record<string, unknown> | null;
+  candidate_fingerprint: string | null;
+  detected_fields: string[];
+  reviewed: boolean;
+};
+
+export type CurrencyCostSummary = {
+  currency: string;
+  total_cost: string;
+};
+
+export type AiUsageSummary = {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  usage_record_count: number;
+  finalized_costs_by_currency: CurrencyCostSummary[];
+  unpriced_usage_count: number;
+  unmapped_usage_count: number;
+  non_final_usage_count: number;
+  invalid_usage_count: number;
+  conflict_count: number;
+  reviewed_conflict_count: number;
+  unreviewed_conflict_count: number;
+  highest_cost_organizations: Array<{ id: string | null; label: string; currency: string; total_cost: string }>;
+  highest_cost_products: Array<{ id: string | null; label: string; currency: string; total_cost: string }>;
+  provider_model_breakdown: Array<{ provider: string; product_model_id: string | null; input_tokens: number; output_tokens: number; total_tokens: number; record_count: number }>;
+  free_internal_testing_costs_by_currency: CurrencyCostSummary[];
+};
+
+export type AiUsageSyncRun = {
+  id: string;
+  product_deployment_id: string;
+  started_at: string;
+  completed_at: string | null;
+  starting_cursor: string | null;
+  ending_cursor: string | null;
+  pages_fetched: number;
+  records_received: number;
+  imported_count: number;
+  unchanged_count: number;
+  finalized_cost_count: number;
+  unresolved_pricing_count: number;
+  unresolved_mapping_count: number;
+  conflict_count: number;
+  invalid_count: number;
+  safe_failure_count: number;
+  status: AiUsageSyncRunStatus;
+  safe_error: string | null;
+  requested_by_admin_id: string | null;
+  reason: string | null;
+};
+
+export type AiUsageSyncRunListPayload = {
+  items: AiUsageSyncRun[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AiUsageSyncState = {
+  product_deployment_id: string;
+  last_committed_cursor: string | null;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  safe_last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type BillingLedgerEntry = {
   id: string;
   organization_id: string;
@@ -512,6 +783,29 @@ export type SyncStatusItem = {
   counts: Record<PendingChangeStatus, number>;
   latest_failure: string | null;
   has_ordering_blocker: boolean;
+  token_usage?: {
+    configured: boolean;
+    path: string | null;
+    last_attempt: string | null;
+    last_success: string | null;
+    last_committed_cursor: string | null;
+    safe_last_error: string | null;
+    latest_run: {
+      id: string;
+      status: AiUsageSyncRunStatus;
+      starting_cursor: string | null;
+      ending_cursor: string | null;
+      pages_fetched: number;
+      records_received: number;
+      imported_count: number;
+      unchanged_count: number;
+      unresolved_pricing_count: number;
+      unresolved_mapping_count: number;
+      conflict_count: number;
+      invalid_count: number;
+      safe_error: string | null;
+    } | null;
+  };
 };
 
 export type SyncStatusPayload = {

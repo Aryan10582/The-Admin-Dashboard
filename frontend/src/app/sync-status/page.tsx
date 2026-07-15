@@ -101,6 +101,24 @@ export default function SyncStatusPage() {
                     <div className="whitespace-nowrap">saved {countFor(product.counts, "saved")} / retry {countFor(product.counts, "pending_retry")}</div>
                     <div className="whitespace-nowrap">accepted {countFor(product.counts, "accepted_by_product")} / manual {countFor(product.counts, "requires_manual_resolution")}</div>
                     {product.has_ordering_blocker ? <div className="mt-1 text-xs text-amber-700">Ordering blocker present</div> : null}
+                    {product.token_usage ? (
+                      <div className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+                        <div>AI usage: {product.token_usage.configured ? "configured" : "not configured"}</div>
+                        <div>path {product.token_usage.path ?? "-"}</div>
+                        <div>last attempt {formatDate(product.token_usage.last_attempt)}</div>
+                        <div>last success {formatDate(product.token_usage.last_success)}</div>
+                        <div>cursor {product.token_usage.last_committed_cursor ?? "-"}</div>
+                        {product.token_usage.latest_run ? (
+                          <div className="mt-1">
+                            <StatusBadge tone={statusTone(product.token_usage.latest_run.status)}>{product.token_usage.latest_run.status}</StatusBadge>
+                            <div>pages {product.token_usage.latest_run.pages_fetched} / records {product.token_usage.latest_run.records_received}</div>
+                            <div>imported {product.token_usage.latest_run.imported_count} / unchanged {product.token_usage.latest_run.unchanged_count}</div>
+                            <div>unpriced {product.token_usage.latest_run.unresolved_pricing_count} / unmapped {product.token_usage.latest_run.unresolved_mapping_count}</div>
+                            <div>conflict {product.token_usage.latest_run.conflict_count} / invalid {product.token_usage.latest_run.invalid_count}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="max-w-xs px-3 py-2">{product.latest_failure ?? "-"}</td>
                   <td className="px-3 py-2">

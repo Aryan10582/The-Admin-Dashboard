@@ -163,3 +163,55 @@ class IdempotencyRecordStatus(StrEnum):
 class PricingCreatedBy(StrEnum):
     system = "system"
     admin = "admin"
+
+
+class AiPricingSourceType(StrEnum):
+    manual = "manual"
+    provider_check = "provider_check"
+    system_import = "system_import"
+
+
+class AiPriceCheckStatus(StrEnum):
+    running = "running"
+    unchanged = "unchanged"
+    version_created = "version_created"
+    requires_manual_review = "requires_manual_review"
+    unsupported = "unsupported"
+    source_unavailable = "source_unavailable"
+    invalid_response = "invalid_response"
+    failed = "failed"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class AiPriceReviewDecision(StrEnum):
+    approved = "approved"
+    rejected = "rejected"
+
+
+class AiUsageFinalizationStatus(StrEnum):
+    finalized = "finalized"
+    non_final = "non_final"
+    invalid = "invalid"
+
+
+class AiUsagePricingResolutionStatus(StrEnum):
+    resolved = "resolved"
+    requires_pricing_resolution = "requires_pricing_resolution"
+    unsupported_dimensions = "unsupported_dimensions"
+
+
+class AiUsageMappingResolutionStatus(StrEnum):
+    resolved = "resolved"
+    requires_mapping_resolution = "requires_mapping_resolution"
+
+
+class AiUsageConflictStatus(StrEnum):
+    none = "none"
+    conflict = "conflict"
+
+
+class AiUsageSyncRunStatus(StrEnum):
+    success = "success"
+    partial_success = "partial_success"
+    failed = "failed"

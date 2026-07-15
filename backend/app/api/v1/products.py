@@ -11,7 +11,9 @@ from app.core.idempotency import require_idempotency_key
 from app.models.admin import Admin
 from app.models.idempotency import IdempotencyRecord
 from app.schemas.discovery import DiscoveryListResponse, ImportAllOrganizationsRequest, ImportOrganizationsRequest, ProductOrganizationDiscoveryRead
+from app.schemas.ai_usage import ProductAIModelPricingMappingCreate, ProductAIModelPricingMappingUpdate, TokenUsageSyncRequest
 from app.schemas.product import ProductDeploymentCreate, ProductDeploymentRead, ProductDeploymentUpdate, ProductHealthCheckRead, ProductPurgeRequest
+from app.services.ai_usage_service import UsageFilters, create_model_mapping, get_model_mapping, get_sync_state, list_model_mappings, list_sync_runs, list_usage, sync_token_usage, update_model_mapping
 from app.services.discovery_service import DiscoveryFilters, discover_product_organizations, import_discoveries, list_discoveries
 from app.services.product_service import create_product, delete_product_if_unused, get_product, list_products, purge_test_product_data, run_product_health_check, test_purge_preview, update_product
 from app.services.sync_service import reverify_product_mappings, sync_product
@@ -143,6 +145,99 @@ async def products_sync(
     current_admin: Admin = Depends(get_current_admin),
 ) -> dict:
     return {"success": True, "data": await sync_product(db, product_id, current_admin)}
+
+
+@router.post("/{product_id}/sync/token-usage")
+async def products_sync_token_usage(
+    product_id: UUID,
+    payload: TokenUsageSyncRequest,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    return {"success": True, "data": await sync_token_usage(db, product_id, payload, idempotency_key, current_admin)}
+
+
+@router.get("/{product_id}/ai-usage")
+async def products_ai_usage(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return {"success": True, "data": list_usage(db, UsageFilters(product_deployment_id=product_id), limit=limit, offset=offset).model_dump(mode="json")}
+
+
+@router.get("/{product_id}/ai-usage-sync-state")
+async def products_ai_usage_sync_state(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    state = get_sync_state(db, product_id)
+    return {"success": True, "data": state.model_dump(mode="json") if state is not None else None}
+
+
+@router.get("/{product_id}/ai-usage-sync-runs")
+async def products_ai_usage_sync_runs(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    product = get_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product deployment not found")
+    return {"success": True, "data": list_sync_runs(db, product_id, limit=limit, offset=offset).model_dump(mode="json")}
+
+
+@router.get("/{product_id}/ai-model-mappings")
+async def products_ai_model_mappings(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": [item.model_dump(mode="json") for item in list_model_mappings(db, product_id)]}
+
+
+@router.post("/{product_id}/ai-model-mappings")
+async def products_ai_model_mapping_create(
+    product_id: UUID,
+    payload: ProductAIModelPricingMappingCreate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    result = create_model_mapping(db, product_id, payload, idempotency_key, current_admin)
+    return {"success": True, "data": result if isinstance(result, dict) else result.model_dump(mode="json")}
+
+
+@router.get("/{product_id}/ai-model-mappings/{mapping_id}")
+async def products_ai_model_mapping_detail(
+    product_id: UUID,
+    mapping_id: UUID,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+) -> dict:
+    return {"success": True, "data": get_model_mapping(db, product_id, mapping_id).model_dump(mode="json")}
+
+
+@router.patch("/{product_id}/ai-model-mappings/{mapping_id}")
+async def products_ai_model_mapping_update(
+    product_id: UUID,
+    mapping_id: UUID,
+    payload: ProductAIModelPricingMappingUpdate,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> dict:
+    result = update_model_mapping(db, product_id, mapping_id, payload, idempotency_key, current_admin)
+    return {"success": True, "data": result if isinstance(result, dict) else result.model_dump(mode="json")}
 
 
 @router.post("/{product_id}/sync/health")

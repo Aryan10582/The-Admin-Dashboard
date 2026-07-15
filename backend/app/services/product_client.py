@@ -11,5 +11,6 @@ def build_product_client(deployment: ProductDeployment, api_secret: str | None =
         health_check_url=deployment.health_check_url,
         organization_list_path=deployment.organization_list_path,
         organization_detail_path_template=deployment.organization_detail_path_template,
+        token_usage_list_path=deployment.token_usage_list_path,
         timeout_seconds=settings.product_health_timeout_seconds,
     )

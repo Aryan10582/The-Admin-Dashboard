@@ -1,5 +1,5 @@
 from app.models.admin import Admin, AdminSession
-from app.models.ai import AiModelPricingVersion, AiUsageRecord
+from app.models.ai import AIPriceCheckRun, AIUsageSyncRun, AIUsageSyncState, AiModelPricingCatalog, AiModelPricingVersion, AiUsageRecord, ProductAIModelPricingMapping
 from app.models.audit import AuditLog
 from app.models.base import Base
 from app.models.billing import BillingLedgerEntry, BillingPlan, BillingPlanVersion, ManualPayment, OrganizationPlanAssignment
@@ -15,8 +15,13 @@ from app.models.service_enforcement import ServiceEnforcementRule
 __all__ = [
     "Admin",
     "AdminSession",
+    "AIPriceCheckRun",
+    "AIUsageSyncRun",
+    "AIUsageSyncState",
+    "AiModelPricingCatalog",
     "AiModelPricingVersion",
     "AiUsageRecord",
+    "ProductAIModelPricingMapping",
     "AuditLog",
     "Base",
     "BillingLedgerEntry",

@@ -55,6 +55,7 @@ export default function ProductDetailPage() {
       admin_api_version: product.admin_api_version,
       organization_list_path: product.organization_list_path ?? "",
       organization_detail_path_template: product.organization_detail_path_template ?? "",
+      token_usage_list_path: product.token_usage_list_path ?? "",
       is_active: product.is_active,
       is_under_maintenance: product.is_under_maintenance,
       admin_api_secret: ""
@@ -205,6 +206,26 @@ export default function ProductDetailPage() {
                   <dd className="break-all">{product.organization_list_path ?? "not configured"}</dd>
                 </div>
                 <div>
+                  <dt className="text-muted-foreground">Token Usage API Path</dt>
+                  <dd className="break-all">{product.token_usage_list_path ?? "Not configured"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">AI Usage Sync</dt>
+                  <dd>{product.ai_usage_sync_configured ? "Configured" : "Not configured"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Last usage sync attempt</dt>
+                  <dd>{product.last_usage_sync_attempt_at ? new Date(product.last_usage_sync_attempt_at).toLocaleString() : "-"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Last successful usage sync</dt>
+                  <dd>{product.last_successful_usage_sync_at ? new Date(product.last_successful_usage_sync_at).toLocaleString() : "-"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Last usage sync error</dt>
+                  <dd>{product.last_usage_sync_error ?? "-"}</dd>
+                </div>
+                <div>
                   <dt className="text-muted-foreground">Last discovery</dt>
                   <dd>{product.last_successful_organization_discovery_at ? new Date(product.last_successful_organization_discovery_at).toLocaleString() : "-"}</dd>
                 </div>
@@ -314,6 +335,13 @@ export default function ProductDetailPage() {
                 <Input placeholder="Admin API version" {...form.register("admin_api_version", { required: true })} />
                 <Input placeholder="Organization List API Path" {...form.register("organization_list_path")} />
                 <Input placeholder="Organization Detail Path Template" {...form.register("organization_detail_path_template")} />
+                <label className="md:col-span-3">
+                  <span className="text-sm font-medium">Token Usage API Path</span>
+                  <Input className="mt-1" placeholder="/api/v1/admin/ai-usage" {...form.register("token_usage_list_path")} />
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Relative product API path used by the Admin Dashboard to import finalized AI token-usage records. Leave empty when the product does not support AI usage synchronization.
+                  </span>
+                </label>
                 <Input type="password" placeholder="New product admin secret" {...form.register("admin_api_secret")} />
                 <div className="flex items-center gap-4 text-sm">
                   <label className="flex items-center gap-2">

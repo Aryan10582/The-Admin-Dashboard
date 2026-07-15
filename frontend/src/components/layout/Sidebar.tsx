@@ -28,6 +28,7 @@ const navItems = [
   { href: "/plans", label: "Plans", icon: Receipt },
   { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/revenue", label: "Revenue", icon: BarChart3 },
+  { href: "/ai-pricing", label: "AI Pricing", icon: Bot },
   { href: "/ai-usage", label: "AI Usage", icon: Bot },
   { href: "/product-health", label: "Product Health", icon: HeartPulse },
   { href: "/sync-status", label: "Sync Status", icon: RefreshCw },

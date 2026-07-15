@@ -100,6 +100,7 @@ def run() -> int:
     os.environ["SESSION_SECRET"] = "pre-demo-session-secret"
     os.environ["PRODUCT_SECRET_ENCRYPTION_KEY"] = Fernet.generate_key().decode("utf-8")
     os.environ["CORS_ORIGINS"] = '["http://localhost:3001"]'
+    os.environ["AI_PRICING_MOCK_ADAPTER_ENABLED"] = "true"
 
     mock_server = None
     try:
@@ -140,6 +141,7 @@ def run() -> int:
                     "admin_api_version": "v1",
                     "organization_list_path": "/v1/admin/organizations",
                     "organization_detail_path_template": "/v1/admin/organizations/{organization_id}",
+                    "token_usage_list_path": "/v1/admin/token-usage",
                     "admin_api_secret": "mock-secret",
                     "is_active": True,
                     "is_under_maintenance": False,
@@ -319,6 +321,362 @@ def run() -> int:
             reporter.pass_("delivery sync status and failures")
         except Exception as exc:
             reporter.fail("delivery sync status and failures", exc)
+            return 1
+
+        try:
+            pricing_catalog = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing",
+                json={
+                    "provider": "OpenAI",
+                    "provider_model_id": f"gpt-demo-{unique}",
+                    "display_name": f"{unique} GPT Demo",
+                    "pricing_scope_code": "standard",
+                    "currency": "USD",
+                    "description": "Pre-demo manual AI pricing",
+                    "reason": "pre-demo pricing catalog",
+                },
+                headers=_idem("ai-pricing-catalog"),
+            )
+            pricing_start = datetime.now(timezone.utc) - timedelta(days=10)
+            pricing_v1 = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{pricing_catalog['id']}/versions",
+                json={
+                    "input_token_price": "2.50000000",
+                    "output_token_price": "10.00000000",
+                    "pricing_unit_tokens": 1000000,
+                    "effective_from": pricing_start.isoformat(),
+                    "reason": "pre-demo pricing v1",
+                },
+                headers=_idem("ai-pricing-v1"),
+            )
+            pricing_v2 = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{pricing_catalog['id']}/versions",
+                json={
+                    "input_token_price": "3.00000000",
+                    "output_token_price": "12.00000000",
+                    "pricing_unit_tokens": 1000000,
+                    "effective_from": (datetime.now(timezone.utc) + timedelta(days=20)).isoformat(),
+                    "reason": "pre-demo pricing v2",
+                },
+                headers=_idem("ai-pricing-v2"),
+            )
+            overlap = client.post(
+                f"/api/v1/ai/pricing/{pricing_catalog['id']}/versions",
+                json={
+                    "input_token_price": "1.00000000",
+                    "output_token_price": "1.00000000",
+                    "pricing_unit_tokens": 1000,
+                    "effective_from": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+                    "reason": "pre-demo overlap",
+                },
+                headers=_idem("ai-pricing-overlap"),
+            )
+            history = _api(client, "GET", f"/api/v1/ai/pricing/{pricing_catalog['id']}/versions")
+            listing = _api(client, "GET", "/api/v1/ai/pricing")
+            if pricing_v1["version_number"] != 1 or pricing_v2["version_number"] != 2:
+                raise RuntimeError("AI pricing versions did not receive sequential version numbers")
+            if pricing_v1["input_token_price"] != "2.50000000":
+                raise RuntimeError("AI pricing v1 did not remain unchanged")
+            if overlap.status_code != 409:
+                raise RuntimeError("AI pricing overlap was not rejected")
+            states = {item["effective_state"] for item in history}
+            if not {"current", "future"}.issubset(states):
+                raise RuntimeError(f"AI pricing history did not show current/future states: {states}")
+            if not listing["items"]:
+                raise RuntimeError("AI pricing list did not include the created catalog")
+            reporter.pass_("ai pricing catalog versions history")
+        except Exception as exc:
+            reporter.fail("ai pricing catalog versions history", exc)
+            return 1
+
+        try:
+            mock_pricing_catalog = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing",
+                json={
+                    "provider": "mock-ai",
+                    "provider_model_id": "mock-model",
+                    "display_name": f"{unique} Mock AI",
+                    "pricing_scope_code": "standard",
+                    "currency": "USD",
+                    "reason": "pre-demo mock pricing catalog",
+                },
+                headers=_idem("mock-ai-pricing-catalog"),
+            )
+            _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{mock_pricing_catalog['id']}/versions",
+                json={
+                    "input_token_price": "2.50000000",
+                    "output_token_price": "10.00000000",
+                    "pricing_unit_tokens": 1000000,
+                    "effective_from": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                    "reason": "pre-demo mock pricing v1",
+                },
+                headers=_idem("mock-ai-pricing-v1"),
+            )
+            unchanged = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing/sync-check",
+                json={"pricing_catalog_id": mock_pricing_catalog["id"], "adapter_code": "development_mock", "mock_scenario": "unchanged", "reason": "pre-demo unchanged check"},
+                headers=_idem("mock-ai-check-unchanged"),
+            )
+            changed = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing/sync-check",
+                json={"pricing_catalog_id": mock_pricing_catalog["id"], "adapter_code": "development_mock", "mock_scenario": "duplicate_source_fingerprint", "reason": "pre-demo exact change"},
+                headers=_idem("mock-ai-check-change"),
+            )
+            duplicate = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing/sync-check",
+                json={"pricing_catalog_id": mock_pricing_catalog["id"], "adapter_code": "development_mock", "mock_scenario": "duplicate_source_fingerprint", "reason": "pre-demo duplicate fingerprint"},
+                headers=_idem("mock-ai-check-duplicate"),
+            )
+            review = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing/sync-check",
+                json={"pricing_catalog_id": mock_pricing_catalog["id"], "adapter_code": "development_mock", "mock_scenario": "unknown_model", "reason": "pre-demo review"},
+                headers=_idem("mock-ai-check-review"),
+            )
+            # The mock scenario is intentionally review-only; the candidate is corrected here in disposable data to exercise approval.
+            from app.models.ai import AIPriceCheckRun
+            from app.core.database import SessionLocal
+
+            with SessionLocal() as db:
+                run = db.get(AIPriceCheckRun, UUID(review["id"]))
+                run.candidate_provider_model_id = "mock-model"
+                run.source_effective_at = datetime(2030, 1, 2, tzinfo=timezone.utc)
+                run.safe_error = "Pre-demo admin verified model mapping"
+                db.commit()
+            approved = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/check-runs/{review['id']}/approve",
+                json={"reason": "pre-demo approve candidate"},
+                headers=_idem("mock-ai-approve"),
+            )
+            reject_candidate = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing/sync-check",
+                json={"pricing_catalog_id": mock_pricing_catalog["id"], "adapter_code": "development_mock", "mock_scenario": "missing_output_price", "reason": "pre-demo reject candidate"},
+                headers=_idem("mock-ai-check-reject"),
+            )
+            rejected = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/check-runs/{reject_candidate['id']}/reject",
+                json={"reason": "pre-demo reject incomplete candidate"},
+                headers=_idem("mock-ai-reject"),
+            )
+            check_history = _api(client, "GET", f"/api/v1/ai/pricing/check-runs?pricing_catalog_id={mock_pricing_catalog['id']}")
+            if unchanged["status"] != "unchanged" or changed["status"] != "version_created" or duplicate["status"] != "unchanged":
+                raise RuntimeError("Mock pricing check statuses did not match expected unchanged/change/dedupe flow")
+            if approved["status"] != "approved" or rejected["status"] != "rejected" or len(check_history["items"]) < 5:
+                raise RuntimeError("Mock pricing review history was not preserved")
+            reporter.pass_("ai pricing trusted checks and review")
+        except Exception as exc:
+            reporter.fail("ai pricing trusted checks and review", exc)
+            return 1
+
+        try:
+            usage_catalog = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing",
+                json={
+                    "provider": "mock-ai",
+                    "provider_model_id": f"mock-model-usage-{unique}",
+                    "display_name": f"{unique} Mock Usage Model",
+                    "pricing_scope_code": "usage-standard",
+                    "currency": "USD",
+                    "reason": "pre-demo usage pricing catalog",
+                },
+                headers=_idem("usage-pricing-catalog"),
+            )
+            old_version = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{usage_catalog['id']}/versions",
+                json={
+                    "input_token_price": "2.00000000",
+                    "output_token_price": "8.00000000",
+                    "pricing_unit_tokens": 1000,
+                    "effective_from": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),
+                    "reason": "pre-demo usage pricing old",
+                },
+                headers=_idem("usage-pricing-old"),
+            )
+            current_version = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{usage_catalog['id']}/versions",
+                json={
+                    "input_token_price": "3.00000000",
+                    "output_token_price": "9.00000000",
+                    "pricing_unit_tokens": 1000,
+                    "effective_from": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                    "reason": "pre-demo usage pricing current",
+                },
+                headers=_idem("usage-pricing-current"),
+            )
+            _api(
+                client,
+                "POST",
+                f"/api/v1/products/{product_id}/ai-model-mappings",
+                json={
+                    "product_provider": "mock-ai",
+                    "product_model_id": "mock-model",
+                    "pricing_catalog_id": usage_catalog["id"],
+                    "reason": "pre-demo map product model",
+                },
+                headers=_idem("usage-model-map"),
+            )
+            httpx.post(f"{mock_url}/mock/scenario", json={"scenario": "usage_multiple_pages"}, timeout=5).raise_for_status()
+            usage_sync_headers = _idem("usage-sync")
+            sync_run = _api(
+                client,
+                "POST",
+                f"/api/v1/products/{product_id}/sync/token-usage",
+                json={"reason": "pre-demo token usage sync", "limit": 2, "max_pages": 5},
+                headers=usage_sync_headers,
+            )
+            usage_list = _api(client, "GET", f"/api/v1/products/{product_id}/ai-usage")
+            usage_state = _api(client, "GET", f"/api/v1/products/{product_id}/ai-usage-sync-state")
+            usage_runs = _api(client, "GET", f"/api/v1/products/{product_id}/ai-usage-sync-runs")
+            unknown_model_usage = _api(client, "GET", f"/api/v1/ai/usage?product_deployment_id={product_id}&product_usage_id=usage-unknown-model")
+            unknown_catalog = _api(
+                client,
+                "POST",
+                "/api/v1/ai/pricing",
+                json={
+                    "provider": "mock-ai",
+                    "provider_model_id": f"mock-unknown-usage-{unique}",
+                    "display_name": f"{unique} Mock Unknown Model",
+                    "pricing_scope_code": "usage-standard",
+                    "currency": "USD",
+                    "reason": "pre-demo unknown usage pricing catalog",
+                },
+                headers=_idem("unknown-usage-catalog"),
+            )
+            _api(
+                client,
+                "POST",
+                f"/api/v1/ai/pricing/{unknown_catalog['id']}/versions",
+                json={
+                    "input_token_price": "4.00000000",
+                    "output_token_price": "12.00000000",
+                    "pricing_unit_tokens": 1000,
+                    "effective_from": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
+                    "reason": "pre-demo unknown usage pricing version",
+                },
+                headers=_idem("unknown-usage-version"),
+            )
+            _api(
+                client,
+                "POST",
+                f"/api/v1/products/{product_id}/ai-model-mappings",
+                json={
+                    "product_provider": "mock-ai",
+                    "product_model_id": "mock-unknown",
+                    "pricing_catalog_id": unknown_catalog["id"],
+                    "reason": "pre-demo map unknown product model",
+                },
+                headers=_idem("unknown-usage-map"),
+            )
+            pricing_resolution = _api(
+                client,
+                "POST",
+                "/api/v1/ai/usage/resolve-missing-pricing",
+                json={"reason": "pre-demo resolve missing pricing", "product_deployment_id": product_id, "limit": 25},
+                headers=_idem("resolve-missing-pricing"),
+            )
+            unmapped_org = _api(
+                client,
+                "POST",
+                "/api/v1/organizations",
+                json={
+                    "central_organization_id": f"{unique}-unmapped",
+                    "name": f"{unique} Unmapped Clinic",
+                    "product_deployment_id": product_id,
+                    "currency": "USD",
+                    "lifecycle_status": "trial",
+                    "billing_mode": "prepaid_credits",
+                    "billing_calculation_status": "active",
+                    "credit_status": "healthy_balance",
+                    "service_status": "running",
+                    "sync_status": "pending",
+                },
+            )
+            _api(client, "PATCH", f"/api/v1/organizations/{unmapped_org['id']}/mapping", json={"product_organization_id": "org_unmapped"})
+            _api(client, "POST", f"/api/v1/organizations/{unmapped_org['id']}/verify-mapping")
+            mapping_resolution = _api(
+                client,
+                "POST",
+                "/api/v1/ai/usage/resolve-mappings",
+                json={"reason": "pre-demo resolve missing mapping", "product_deployment_id": product_id, "limit": 25},
+                headers=_idem("resolve-missing-mapping"),
+            )
+            replay = _api(
+                client,
+                "POST",
+                f"/api/v1/products/{product_id}/sync/token-usage",
+                json={"reason": "pre-demo token usage sync", "limit": 2, "max_pages": 5},
+                headers=usage_sync_headers,
+            )
+            httpx.post(f"{mock_url}/mock/scenario", json={"scenario": "usage_conflicting_replay"}, timeout=5).raise_for_status()
+            conflict_run = _api(
+                client,
+                "POST",
+                f"/api/v1/products/{product_id}/sync/token-usage",
+                json={"reason": "pre-demo conflict replay", "limit": 2, "max_pages": 5},
+                headers=_idem("usage-conflict"),
+            )
+            conflict_rows = _api(client, "GET", f"/api/v1/ai/usage?product_deployment_id={product_id}&conflict_status=conflict")
+            conflict_detail = _api(client, "GET", f"/api/v1/ai/usage/{conflict_rows['items'][0]['id']}/conflict")
+            conflict_review = _api(
+                client,
+                "POST",
+                f"/api/v1/ai/usage/{conflict_rows['items'][0]['id']}/conflict/mark-reviewed",
+                json={"reason": "pre-demo reviewed conflict without rewriting usage"},
+                headers=_idem("review-usage-conflict"),
+            )
+            usage_summary = _api(client, "GET", f"/api/v1/ai/usage/summary?product_deployment_id={product_id}")
+            version_ids = {item["pricing_version_id"] for item in usage_list["items"] if item["product_usage_id"] in {"usage-old-001", "usage-current-001"}}
+            if sync_run["imported_count"] < 4 or sync_run["status"] != "partial_success":
+                raise RuntimeError(f"AI usage sync did not preserve unresolved records: {sync_run}")
+            if not {old_version["id"], current_version["id"]}.issubset(version_ids):
+                raise RuntimeError(f"AI usage historical pricing versions were not selected: {version_ids}")
+            if usage_state["product_deployment_id"] != product_id or usage_runs["total"] < 1:
+                raise RuntimeError("AI usage sync state/run history was not queryable")
+            if replay != sync_run:
+                raise RuntimeError("AI usage sync idempotent replay did not return the original response")
+            if not unknown_model_usage["items"] or pricing_resolution["resolved"] < 1:
+                raise RuntimeError("AI usage missing pricing resolution did not resolve the unknown model")
+            if mapping_resolution["resolved"] < 1:
+                raise RuntimeError("AI usage missing organization mapping did not resolve")
+            if conflict_run["conflict_count"] < 1:
+                raise RuntimeError("AI usage conflicting replay was not detected")
+            if not conflict_detail["candidate"] or not conflict_review["reviewed"]:
+                raise RuntimeError("AI usage conflict review did not preserve candidate and mark reviewed")
+            if not usage_summary["finalized_costs_by_currency"]:
+                raise RuntimeError("AI usage summary did not return currency-separated finalized costs")
+            reporter.pass_("ai usage resolution summary and conflict review")
+        except Exception as exc:
+            reporter.fail("ai usage resolution summary and conflict review", exc)
             return 1
 
         try:
